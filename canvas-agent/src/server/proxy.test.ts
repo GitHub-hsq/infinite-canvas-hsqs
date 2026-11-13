@@ -11,12 +11,7 @@ test("后台代理只接受本地画布、正式站点或已配对来源", () =>
     assert.equal(isTrustedProxyOrigin("http://localhost:5173", []), true);
     assert.equal(isTrustedProxyOrigin("https://canvas.best", []), true);
     assert.equal(isTrustedProxyOrigin("https://preview.canvas.best", []), true);
-    assert.equal(isTrustedProxyOrigin("https://suparkai.tech", []), true);
-    assert.equal(isTrustedProxyOrigin("https://www.suparkai.tech", []), true);
-    assert.equal(isTrustedProxyOrigin("https://infinite-canvas-hsqs.vercel.app", []), true);
     assert.equal(isTrustedProxyOrigin("https://custom.example", ["https://custom.example"]), true);
-    assert.equal(isTrustedProxyOrigin("http://www.suparkai.tech", []), false);
-    assert.equal(isTrustedProxyOrigin("https://suparkai.tech.evil.example", []), false);
     assert.equal(isTrustedProxyOrigin("https://evil.example", []), false);
     assert.equal(isTrustedProxyOrigin("null", []), false);
 });

@@ -552,16 +552,10 @@ export function isTrustedProxyOrigin(origin: string, approvedOrigins: string[]) 
     try {
         const url = new URL(origin);
         if (url.protocol !== "http:" && url.protocol !== "https:") return false;
-        if (url.hostname === "localhost" || url.hostname === "127.0.0.1") return true;
-        if (url.protocol !== "https:") return false;
-        return isDomainOrSubdomain(url.hostname, "canvas.best") || isDomainOrSubdomain(url.hostname, "suparkai.tech") || url.hostname === "infinite-canvas-hsqs.vercel.app";
+        return url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "canvas.best" || url.hostname.endsWith(".canvas.best");
     } catch {
         return false;
     }
-}
-
-function isDomainOrSubdomain(hostname: string, domain: string) {
-    return hostname === domain || hostname.endsWith(`.${domain}`);
 }
 
 /** 校验请求查询参数或请求头中的连接 token。 */

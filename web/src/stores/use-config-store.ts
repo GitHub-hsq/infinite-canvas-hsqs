@@ -91,7 +91,7 @@ export const CONFIG_STORE_KEY = "infinite-canvas:ai_config_store";
 const CHANNEL_MODEL_SEPARATOR = "::";
 const OPENAI_BASE_URL = "https://api.openai.com";
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com";
-export const LOCAL_PROXY_SERVICE_URL = "http://127.0.0.1:17371";
+export const LOCAL_PROXY_SERVICE_URL = "http://127.0.0.1:23210";
 export const defaultConfig: AiConfig = {
     channelMode: "local",
     baseUrl: OPENAI_BASE_URL,
@@ -619,5 +619,5 @@ export function withLocalProxy(url: string, modeOverride?: ChannelProxyMode) {
     const shouldProxy = mode === "always" ? true : mode === "never" ? false : config.proxyEnabled;
     if (!shouldProxy) return url;
     if (url.startsWith(`${LOCAL_PROXY_SERVICE_URL}/`)) return url;
-    return `${LOCAL_PROXY_SERVICE_URL}/proxy?${new URLSearchParams({ target: url })}`;
+    return `${LOCAL_PROXY_SERVICE_URL}/${url}`;
 }

@@ -92,6 +92,9 @@
 - 新增或调整超时、重试次数、大小限制、并发上限等会改变实际行为的边界值前，必须先向用户说明适用环节、默认值和失败后的处理方式，并取得确认；不要把经验值当成纯内部实现静默加入。
 - 当前画布项目和“我的素材”主要保存在浏览器本地，不要在文档中误写成已支持云同步。
 - 当前 AI API Key 存在浏览器本地，并由前端直接请求 OpenAI 兼容接口；涉及安全说明时要写清楚。
+- 「本地代理」和「Agent 对话/画布控制」是两套独立程序：本地代理固定使用 `@basketikun/canvas-proxy` 的 `127.0.0.1:23210`；Canvas Agent 使用 `127.0.0.1:17371`。前端代理路由、文档和排错不得让代理复用或依赖 Agent 的进程、面板、SSE、Connect token、Origin 配对或白名单。
+- 本地代理代码位于 `canvas-proxy/`，网页入口常量是 `web/src/stores/use-config-store.ts` 的 `LOCAL_PROXY_SERVICE_URL`。遇到代理问题先检查 23210 服务和 `@basketikun/canvas-proxy`，不得通过修改 `canvas-agent/src/server/http.ts` 的 Agent Origin 白名单解决。
+- 正式站域名变更不应影响独立代理：`canvas-proxy` 只监听本机回环地址并向浏览器返回 CORS 头，不维护正式站 Origin 白名单。若再次出现 `origin not allowed`，说明请求错误路由到了 Agent 17371，应修正前端代理地址，而不是放宽 Agent。
 - Docker 静态资源路径目前仍是待办项，文档中不要过度承诺生产部署已经完全验证。
 - Agent 对话消息必须同时按 `threadId`、`turnId` 和 `itemId` 归属；实时事件只用于补充未物化的 turn，历史快照成为权威后不得重复合并同一条消息。
 - Agent 通信协议版本与消息存储版本必须独立管理；消息存储格式升级时必须先备份再迁移，遇到未知版本、损坏清单或冲突备份时拒绝覆盖原文件，不得按记录数量或文件大小静默裁剪历史元数据。

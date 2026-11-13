@@ -4,13 +4,15 @@ Infinite Canvas 的本地转发代理。浏览器直连第三方 AI 接口时经
 
 代理只做转发：不改写请求体，不校验 API Key，不落盘任何日志。
 
+> **与 Canvas Agent 完全独立。** 本代理固定使用 `127.0.0.1:23210`；Canvas Agent 使用 `127.0.0.1:17371`。使用本代理不需要启动或连接 Agent、不需要打开 Agent 面板，也不需要 Connect token。若网页代理请求进入 17371 并收到 `origin not allowed`，说明前端代理地址配置错误，应改回 23210，而不是修改 Agent 来源白名单。
+
 ## 使用
 
 ```bash
 npx @basketikun/canvas-proxy@latest
 ```
 
-默认监听 `http://127.0.0.1:23210`。把这个地址填进 Infinite Canvas 的「配置 → 本地代理」，并打开开关即可。
+默认监听 `http://127.0.0.1:23210`。当前网页已内置该地址，只需保持这个终端进程运行，再打开 Infinite Canvas 的「配置 → 本地代理」开关即可。
 
 带上 `@latest` 是因为 npx 会缓存已下载的版本，不加就可能一直运行旧版本。
 

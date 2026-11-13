@@ -36,7 +36,9 @@ Connect token: xxxxxx
 
 在画布右上角点击 `Agent`，填入地址和 token 后连接。
 
-Canvas Agent 进程同时提供独立的本地后台代理。「配置 → 本地代理」开启后，模型、生成和 WebDAV 请求统一通过 `127.0.0.1:17371/proxy` 转发，不需要开启 Agent 面板、连接 Agent 对话或填写连接 token，也不需要再启动已经移除的独立 `canvas-proxy` 窗口。Agent 对话和画布控制接口仍继续使用 token 鉴权。
+Canvas Agent 只负责 Agent 对话、画布控制和 MCP，默认监听 `127.0.0.1:17371`，相关接口继续使用 Connect token 和来源配对。
+
+> **边界说明：本地代理不是 Canvas Agent 功能。** 「配置 → 本地代理」使用单独的 `@basketikun/canvas-proxy` 进程和 `127.0.0.1:23210`，参见 [`../canvas-proxy/README.md`](../canvas-proxy/README.md)。代理问题不得通过开启 Agent 面板、连接 Agent、填写 Connect token 或放宽本文件服务的 Origin 配对规则处理；如果代理请求打到 `17371` 并返回 `origin not allowed`，应修正前端代理地址到 `23210`。
 
 Codex app 插件会读取启动输出里的 Local URL 和 Connect token，并直接打开画布网页地址；Canvas Agent 不负责生成画布打开 URL。
 

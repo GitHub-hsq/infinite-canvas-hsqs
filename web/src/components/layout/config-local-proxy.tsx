@@ -23,7 +23,7 @@ export function ConfigLocalProxy() {
             </div>
             <div className="mt-3 text-xs text-stone-500">
                 {config.proxyEnabled
-                    ? t("config.proxy.activeLocal", { address: `${LOCAL_PROXY_SERVICE_URL}/proxy` })
+                    ? t("config.proxy.activeLocal", { address: LOCAL_PROXY_SERVICE_URL })
                     : t("config.proxy.channelHint")}
             </div>
         </section>
