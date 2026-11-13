@@ -1,7 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "installCommand": "bun install",
   "buildCommand": "bun run build",
   "outputDirectory": "dist",
+  "proxy": {
+    "entrypoint": "middleware.ts"
+  },
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }

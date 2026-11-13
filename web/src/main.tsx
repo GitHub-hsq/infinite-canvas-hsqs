@@ -5,11 +5,11 @@ import "streamdown/styles.css";
 import "./styles/globals.css";
 import { RouterProvider } from "react-router-dom";
 
-import { requireSiteAccess } from "@/site-access-gate";
+import { AppProviders } from "@/components/layout/app-providers";
+import "@/i18n";
+import { initAnalytics } from "@/lib/analytics";
+import { router } from "@/router";
 
-await requireSiteAccess();
-
-const [{ AppProviders }, { initAnalytics }, { router }] = await Promise.all([import("@/components/layout/app-providers"), import("@/lib/analytics"), import("@/router"), import("@/i18n")]);
 initAnalytics();
 
 document.body.style.fontFamily = '"SF Pro Display","SF Pro Text","PingFang SC","Microsoft YaHei","Helvetica Neue",sans-serif';
