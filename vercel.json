@@ -1,7 +1,11 @@
 {
+  "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "vite",
   "installCommand": "cd web && bun install",
   "buildCommand": "cd web && bun run build",
   "outputDirectory": "web/dist",
+  "proxy": {
+    "entrypoint": "proxy.ts"
+  },
   "rewrites": [{ "source": "/(.*)", "destination": "/index.html" }]
 }
