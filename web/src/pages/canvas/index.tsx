@@ -5,8 +5,9 @@ import { Download, FileUp, Plus } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { readZip } from "@/lib/zip";
-import { setMediaBlob } from "@/services/file-storage";
-import { setImageBlob } from "@/services/image-storage";
+import { resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
+import { resolveImageUrl, setImageBlob } from "@/services/image-storage";
+import { useAssetStore, type Asset } from "@/stores/use-asset-store";
 import { CanvasDeleteProjectsDialog } from "@/components/canvas/canvas-delete-projects-dialog";
 import { CanvasProjectCard } from "@/components/canvas/canvas-project-card";
 import type { CanvasExportFile } from "@/types/canvas-export";
@@ -54,6 +55,17 @@ export default function CanvasPage() {
                     }),
                 ),
             );
+            const libraryAssets = await Promise.all(data.assets.map(async (asset): Promise<Asset> => {
+                if (asset.kind === "text" || !asset.data.storageKey) return asset;
+                if (asset.kind === "image") {
+                    const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
+                    return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? dataUrl : asset.coverUrl, data: { ...asset.data, dataUrl } };
+                }
+                return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } } as Asset;
+            }));
+            const library = useAssetStore.getState();
+            library.mergeCategories(data.categories);
+            library.replaceAssets([...library.assets, ...libraryAssets.filter((asset) => !library.assets.some((item) => item.id === asset.id))]);
             data.projects.forEach((item) => importProject(item.project));
             message.success(t("canvas.imported", { count: data.projects.length }));
         } catch {

@@ -7,6 +7,7 @@ import { ModelPicker } from "@/components/model-picker";
 import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveConfig, type AiConfig } from "@/stores/use-config-store";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
+import { useAssetStore } from "@/stores/use-asset-store";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
 import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
@@ -30,7 +31,6 @@ type CanvasNodePromptPanelProps = {
     nodes: CanvasNodeData[];
     connectedNodes?: CanvasNodeData[];
     onDisconnectReference?: (fromNodeId: string, toNodeId: string) => void;
-    onStartReferenceSelection?: (nodeId: string) => void;
     onImageSettingsOpenChange?: (open: boolean) => void;
     modeOverride?: CanvasNodeGenerationMode; // Plugin nodes set their generation type through useBuiltinPanel.mode.
 };
@@ -46,7 +46,6 @@ export function CanvasNodePromptPanel({
     mentionReferences = [],
     connectedNodes = [],
     onDisconnectReference,
-    onStartReferenceSelection,
     onImageSettingsOpenChange,
     modeOverride,
 }: CanvasNodePromptPanelProps) {
@@ -76,7 +75,9 @@ export function CanvasNodePromptPanel({
 
     // Text is required, but it may come from a connected text node instead of the prompt box.
     // Connected images alone are not enough to generate.
-    const hasConnectedText = connectedNodes.some(nodeProvidesText);
+    const assets = useAssetStore((state) => state.assets);
+    const hasConnectedText = connectedNodes.some(nodeProvidesText) || assets.some((asset) => asset.kind === "text" && node.metadata?.assetReferenceIds?.includes(asset.id) && Boolean(asset.data.content.trim()));
+    const changeAssetReferences = (nodeId: string, assetReferenceIds: string[]) => onConfigChange(nodeId, { assetReferenceIds });
     const canSubmit = Boolean(prompt.trim()) || hasConnectedText;
 
     const submit = () => {
@@ -102,7 +103,7 @@ export function CanvasNodePromptPanel({
                 event.stopPropagation();
             }}
         >
-            <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onStartSelection={onStartReferenceSelection} />
+            <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onAssetReferencesChange={changeAssetReferences} />
             <CanvasPromptChipInput
                 value={prompt}
                 references={mentionReferences}
@@ -189,16 +190,7 @@ export function CanvasNodePromptPanel({
             </div>
             <Modal title={t("canvas.promptPanel.editorTitle")} open={expanded} centered width={760} footer={null} onCancel={() => setExpanded(false)} destroyOnHidden>
                 <div data-canvas-no-zoom className="pt-2" onWheelCapture={(event) => event.stopPropagation()}>
-                    <CanvasNodeReferenceBar
-                        nodeId={node.id}
-                        nodes={nodes}
-                        connectedNodes={connectedNodes}
-                        onDisconnect={onDisconnectReference}
-                        onStartSelection={(nodeId) => {
-                            setExpanded(false);
-                            onStartReferenceSelection?.(nodeId);
-                        }}
-                    />
+                    <CanvasNodeReferenceBar nodeId={node.id} nodes={nodes} connectedNodes={connectedNodes} onDisconnect={onDisconnectReference} onAssetReferencesChange={changeAssetReferences} />
                     <CanvasPromptChipInput
                         value={prompt}
                         references={mentionReferences}

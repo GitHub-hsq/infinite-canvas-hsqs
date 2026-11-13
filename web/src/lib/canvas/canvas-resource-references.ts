@@ -3,6 +3,8 @@ import i18n from "@/i18n";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 import { getDataUrlByteSize, readImageMeta } from "@/lib/image-utils";
 import { imageToDataUrl } from "@/services/image-storage";
+import { assetMediaUrl } from "@/lib/asset-library";
+import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
 
 export type CanvasResourceKind = "image" | "video" | "audio" | "text";
@@ -18,8 +20,27 @@ export type CanvasResourceReference = {
     active: boolean;
 };
 
-export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
-    return labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+/** Assets attached to a node's reference bar take part in mentions and generation as resources with these ids. */
+export const ASSET_REFERENCE_PREFIX = "asset:";
+
+export function assetIdsFromReferenceIds(ids: string[]) {
+    return ids.filter((id) => id.startsWith(ASSET_REFERENCE_PREFIX)).map((id) => id.slice(ASSET_REFERENCE_PREFIX.length));
+}
+
+export function buildNodeMentionReferences(node: CanvasNodeData, nodes: CanvasNodeData[], connections: CanvasConnection[], assets: Asset[] = []) {
+    const references = labelResourceNodes(getMentionResourceNodes(node.id, nodes, connections), true);
+    // Attached library assets continue the numbering of the connected references.
+    const counts: Record<CanvasResourceKind, number> = { image: 0, video: 0, audio: 0, text: 0 };
+    references.forEach((reference) => counts[reference.kind]++);
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    const assetReferences = (node.metadata?.assetReferenceIds || []).flatMap((id): CanvasResourceReference[] => {
+        const asset = assetById.get(id);
+        if (!asset) return [];
+        const label = labelForKind(asset.kind, counts[asset.kind]++);
+        const referenceId = `${ASSET_REFERENCE_PREFIX}${id}`;
+        return [{ id: referenceId, nodeId: referenceId, kind: asset.kind, label, title: asset.title || label, previewUrl: assetMediaUrl(asset) || undefined, text: asset.kind === "text" ? asset.data.content : undefined, active: true }];
+    });
+    return [...references, ...assetReferences];
 }
 
 export function buildCanvasResourceReferences(nodes: CanvasNodeData[]) {

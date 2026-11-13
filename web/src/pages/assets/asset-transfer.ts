@@ -1,15 +1,16 @@
 import { saveAs } from "file-saver";
 
 import { createZip, readZip } from "@/lib/zip";
-import { getMediaBlob, setMediaBlob } from "@/services/file-storage";
-import { getImageBlob, setImageBlob } from "@/services/image-storage";
-import type { Asset } from "@/stores/use-asset-store";
+import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
+import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
+import { useAssetStore, type Asset, type AssetCategory } from "@/stores/use-asset-store";
 
 type AssetExportFile = {
     app: "infinite-canvas";
     version: 1;
     exportedAt: string;
     assets: Asset[];
+    categories: AssetCategory[];
     files: AssetExportItem[];
 };
 
@@ -26,7 +27,7 @@ export async function exportAssets(assets: Asset[], filename: string) {
 
     await Promise.all(
         assets.map(async (asset) => {
-            if (asset.kind !== "image" && asset.kind !== "video") return;
+            if (asset.kind === "text") return;
             const storageKey = asset.data.storageKey;
             if (!storageKey) return;
             const blob = asset.kind === "image" ? await getImageBlob(storageKey) : await getMediaBlob(storageKey);
@@ -37,7 +38,7 @@ export async function exportAssets(assets: Asset[], filename: string) {
         }),
     );
 
-    const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets, files };
+    const data: AssetExportFile = { app: "infinite-canvas", version: 1, exportedAt: new Date().toISOString(), assets, categories: useAssetStore.getState().categories, files };
     const zip = await createZip([{ name: "assets.json", data: JSON.stringify(data, null, 2) }, ...zipFiles]);
     saveAs(zip, filename);
 }
@@ -55,7 +56,15 @@ export async function readAssetPackage(file: File) {
             await (item.storageKey.startsWith("image:") ? setImageBlob(item.storageKey, typedBlob) : setMediaBlob(item.storageKey, typedBlob));
         }),
     );
-    return data.assets;
+    const assets = await Promise.all(data.assets.map(async (asset): Promise<Asset> => {
+        if (asset.kind === "text" || !asset.data.storageKey) return asset;
+        if (asset.kind === "image") {
+            const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
+            return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? dataUrl : asset.coverUrl, data: { ...asset.data, dataUrl } };
+        }
+        return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } } as Asset;
+    }));
+    return { assets, categories: data.categories };
 }
 
 function safeFileName(value: string) {

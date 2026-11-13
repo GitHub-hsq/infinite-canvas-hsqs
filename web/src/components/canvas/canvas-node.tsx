@@ -63,7 +63,6 @@ type CanvasNodeProps = {
     isFocusRelated: boolean;
     isConnectionTarget: boolean;
     isConnecting: boolean;
-    referenceSelectionState?: "target" | "disabled" | "available";
     showPanel: boolean;
     showImageInfo: boolean;
     mentionReferences?: CanvasResourceReference[];
@@ -92,7 +91,6 @@ type CanvasNodeProps = {
     onDeleteBatchImage?: (nodeId: string, imageId: string) => void;
     onRetry?: (node: CanvasNodeData) => void;
     onViewImage?: (node: CanvasNodeData, imageId?: string) => void;
-    onSelectReference?: (nodeId: string) => void;
     onContextMenu: (event: React.MouseEvent, nodeId: string) => void;
 };
 
@@ -131,7 +129,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     isFocusRelated,
     isConnectionTarget,
     isConnecting,
-    referenceSelectionState,
     showPanel,
     showImageInfo,
     mentionReferences = [],
@@ -159,7 +156,6 @@ export const CanvasNode = React.memo(function CanvasNode({
     onDeleteBatchImage,
     onRetry,
     onViewImage,
-    onSelectReference,
     onContextMenu,
 }: CanvasNodeProps) {
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -343,7 +339,7 @@ export const CanvasNode = React.memo(function CanvasNode({
     return (
         <div
             data-node-id={data.id}
-            className={`node-element group/node absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${referenceSelectionState === "available" ? "cursor-pointer" : referenceSelectionState ? "cursor-not-allowed" : data.type === CanvasNodeType.Text ? "cursor-default" : ""}`}
+            className={`node-element group/node absolute flex select-none flex-col transition-shadow duration-200 ${isGroup ? "z-[5]" : isSelected ? "z-50" : "z-10"} ${data.type === CanvasNodeType.Text ? "cursor-default" : ""}`}
             style={{
                 transform: `translate(${data.position.x}px, ${data.position.y}px)`,
                 width: data.width,
@@ -360,14 +356,11 @@ export const CanvasNode = React.memo(function CanvasNode({
                 onHoverEnd(data.id);
             }}
             onMouseDownCapture={(event) => {
-                if (!referenceSelectionState && !(event.target instanceof Element && event.target.closest("[data-node-title]"))) onSelectCapture?.(event, data.id);
+                if (!(event.target instanceof Element && event.target.closest("[data-node-title]"))) onSelectCapture?.(event, data.id);
             }}
-            onContextMenu={(event) => {
-                if (referenceSelectionState) event.preventDefault();
-                else onContextMenu(event, data.id);
-            }}
+            onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            {!referenceSelectionState && (isSelected || hovered || isEditingTitle) && (
+            {(isSelected || hovered || isEditingTitle) && (
                 <div data-node-title className="absolute left-0 top-[-28px] z-[65] flex w-full min-w-0 items-center gap-1 overflow-hidden" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     <NodeTitleIcon type={data.type} />
                     {isEditingTitle ? (
@@ -429,18 +422,8 @@ export const CanvasNode = React.memo(function CanvasNode({
                               ? `0 0 0 1px ${theme.node.muted}55, 0 18px 48px rgba(0,0,0,.14)`
                               : undefined,
                 }}
-                onMouseDown={(event) => {
-                    if (!referenceSelectionState) onMouseDown(event, data.id);
-                    else if (event.button === 0 && referenceSelectionState === "available") {
-                        event.stopPropagation();
-                        onSelectReference?.(data.id);
-                    }
-                }}
+                onMouseDown={(event) => onMouseDown(event, data.id)}
                 onDoubleClick={(event) => {
-                    if (referenceSelectionState) {
-                        event.stopPropagation();
-                        return;
-                    }
                     if (definition?.onDoubleClick && pluginContext) {
                         if (definition.onDoubleClick(pluginContext)) event.stopPropagation();
                         return;
@@ -495,32 +478,16 @@ export const CanvasNode = React.memo(function CanvasNode({
                     <div className="pointer-events-none absolute inset-x-0 bottom-0 h-12" style={{ background: `linear-gradient(to top, ${theme.canvas.background}66, transparent)` }} />
                 ) : null}
 
-                {referenceSelectionState && (referenceSelectionState !== "available" || hovered) ? (
-                    <div
-                        className="pointer-events-none absolute inset-0 z-[60] grid place-items-center rounded-[inherit]"
-                        style={{
-                            background: `color-mix(in srgb, ${theme.canvas.background} ${referenceSelectionState === "target" ? 78 : referenceSelectionState === "disabled" ? 60 : 34}%, transparent)`,
-                            boxShadow: referenceSelectionState === "available" ? `inset 0 0 0 ${isImageNode ? imageOutlineWidth : 2}px ${selectionColor}` : undefined,
-                        }}
-                    >
-                        {referenceSelectionState !== "disabled" ? (
-                            <span className="rounded-lg px-3 py-2 text-sm font-medium shadow-sm" style={{ background: theme.toolbar.panel, color: theme.node.text }}>
-                                {t(referenceSelectionState === "target" ? "canvas.references.selecting" : "canvas.references.choose")}
-                            </span>
-                        ) : null}
-                    </div>
-                ) : null}
-
-                {!referenceSelectionState ? <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} /> : null}
-                {!referenceSelectionState ? <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} /> : null}
+                <ResizeHandle corner="top-left" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="top-right" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-left" onMouseDown={handleResizeMouseDown} />
+                <ResizeHandle corner="bottom-right" onMouseDown={handleResizeMouseDown} />
             </div>
 
-            {!referenceSelectionState && !isGroup && hasIncomingConnection ? (
+            {!isGroup && hasIncomingConnection ? (
                 <ConnectionHandleDot side="left" visible={handlesVisible} y={connectionHandleY(data, pointerWorldY)} onHoverChange={setHandleHovered} onMouseDown={(event) => onConnectStart(event, data.id, "target")} />
             ) : null}
-            {!referenceSelectionState && (definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? (
+            {(definition?.hasSourceHandle ?? true) && data.type !== CanvasNodeType.Config ? (
                 <ConnectionHandleDot side="right" visible={handlesVisible} y={connectionHandleY(data, pointerWorldY)} onHoverChange={setHandleHovered} onMouseDown={(event) => onConnectStart(event, data.id, "source")} />
             ) : null}
 

@@ -4,7 +4,7 @@ import i18n from "@/i18n";
 import { getMediaBlob, resolveMediaUrl, setMediaBlob } from "@/services/file-storage";
 import { getImageBlob, resolveImageUrl, setImageBlob } from "@/services/image-storage";
 import { downloadWebdavFile, uploadWebdavFile, WEBDAV_MANIFEST_FILE_NAME } from "@/services/webdav-sync";
-import type { Asset } from "@/stores/use-asset-store";
+import type { Asset, AssetCategory } from "@/stores/use-asset-store";
 import { useAssetStore } from "@/stores/use-asset-store";
 import type { WebdavSyncConfig } from "@/stores/use-config-store";
 import type { CanvasDeletedProject, CanvasProject } from "@/stores/canvas/use-canvas-store";
@@ -14,7 +14,7 @@ type StoredLog = Record<string, unknown> & { id?: string };
 export type AppSyncDomainKey = "canvas" | "assets" | "image-workbench" | "video-workbench";
 type DomainKey = AppSyncDomainKey;
 type CanvasDomainData = { projects: CanvasProject[]; deleted: CanvasDeletedProject[] };
-type AssetDomainData = { assets: Asset[] };
+type AssetDomainData = { assets: Asset[]; categories: AssetCategory[] };
 type LogDomainData = { logs: StoredLog[] };
 
 type AppSyncFile = {
@@ -100,10 +100,15 @@ export async function syncAppDataToWebdav(config: WebdavSyncConfig, onProgress?:
         syncDomain<AssetDomainData>(config, onProgress, {
             key: "assets",
             label: "我的资产",
-            emptyData: { assets: [] },
-            localData: async () => ({ assets: useAssetStore.getState().assets }),
-            mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt") }),
-            applyData: async (data) => useAssetStore.getState().replaceAssets(await Promise.all(data.assets.map(hydrateAsset))),
+            emptyData: { assets: [], categories: [] },
+            localData: async () => {
+                const { assets, categories } = useAssetStore.getState();
+                return { assets, categories };
+            },
+            mergeData: (local, remote) => ({ assets: mergeById(local.assets, remote.assets, "updatedAt"), categories: mergeById(local.categories, remote.categories, "updatedAt") }),
+            applyData: async (data) => {
+                useAssetStore.setState({ assets: await Promise.all(data.assets.map(hydrateAsset)), categories: data.categories });
+            },
         }),
         syncDomain<LogDomainData>(config, onProgress, {
             key: "image-workbench",
@@ -272,9 +277,9 @@ async function hydrateAsset(asset: Asset): Promise<Asset> {
         const dataUrl = await resolveImageUrl(asset.data.storageKey, asset.data.dataUrl);
         return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? dataUrl : asset.coverUrl, data: { ...asset.data, dataUrl } };
     }
-    if (asset.kind === "video" && asset.data.storageKey) {
+    if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) {
         const url = await resolveMediaUrl(asset.data.storageKey, asset.data.url);
-        return { ...asset, coverUrl: asset.coverUrl.startsWith("blob:") ? url : asset.coverUrl, data: { ...asset.data, url } };
+        return { ...asset, data: { ...asset.data, url } } as Asset;
     }
     return asset;
 }

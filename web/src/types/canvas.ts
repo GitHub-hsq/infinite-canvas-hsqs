@@ -80,6 +80,8 @@ export type CanvasNodeMetadata = {
     audioInstructions?: string;
     references?: string[];
     referenceNodeIds?: string[];
+    /** Ids of "我的资产" items attached to this node's reference bar. */
+    assetReferenceIds?: string[];
     naturalWidth?: number;
     naturalHeight?: number;
     freeResize?: boolean;

@@ -1,4 +1,4 @@
-import { App, Button, Drawer, Form, Input, Progress, Radio, Select, Switch } from "antd";
+import { App, Button, Drawer, Form, Input, Popconfirm, Progress, Radio, Select, Switch } from "antd";
 import type { TFunction } from "i18next";
 import { ArrowLeft, BookOpen, ChevronRight, Cloud, Download, ExternalLink, Pencil, Plus, Puzzle, RefreshCw, Trash2, Upload, Wifi, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
@@ -70,6 +70,7 @@ export function AppConfigPanel() {
     const configInputRef = useRef<HTMLInputElement>(null);
     const [expandedTab, setExpandedTab] = useState<ConfigTabKey | null>(null);
     const [editingChannelId, setEditingChannelId] = useState("");
+    const draftRef = useRef<{ id: string; snapshot: string } | null>(null);
     const [pickingModels, setPickingModels] = useState(false);
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
@@ -106,6 +107,30 @@ export function AppConfigPanel() {
         const channel = createModelChannel({ name: t("config.channels.numberedName", { count: config.channels.length + 1 }) });
         updateChannels([...config.channels, channel]);
         setEditingChannelId(channel.id);
+        // Snapshot the stored form so leaving without any edit can be detected exactly.
+        draftRef.current = { id: channel.id, snapshot: JSON.stringify(useConfigStore.getState().config.channels.find((item) => item.id === channel.id)) };
+    };
+
+    // A channel just added here is removed again when left untouched; `keepIfEdited: false` also drops it when only its endpoint changed.
+    const discardDraft = (keepIfEdited = true) => {
+        const draft = draftRef.current;
+        draftRef.current = null;
+        const current = useConfigStore.getState().config;
+        const channel = draft && current.channels.find((item) => item.id === draft.id);
+        if (!draft || !channel || current.channels.length <= 1) return;
+        const untouched = JSON.stringify(channel) === draft.snapshot;
+        const empty = !channel.models.length && !channel.apiKey.trim() && !channel.apiKeys?.some((item) => item.apiKey.trim());
+        if (untouched || (!keepIfEdited && empty)) saveConfig(withChannels(current, current.channels.filter((item) => item.id !== channel.id)));
+    };
+    const discardDraftRef = useRef(discardDraft);
+    discardDraftRef.current = discardDraft;
+    // Closing the drawer while a fresh channel is still untouched removes it as well.
+    useEffect(() => () => discardDraftRef.current(), []);
+
+    // Switching to a channel with the same domain discards the channel just added here if nothing but its endpoint was filled in.
+    const switchChannel = (channelId: string) => {
+        discardDraft(false);
+        setEditingChannelId(channelId);
     };
 
     const deleteChannel = (id: string) => {
@@ -182,8 +207,15 @@ export function AppConfigPanel() {
     if (editingChannel) {
         return (
             <div>
-                <SubViewHeader title={t("config.channelEditor.title")} backLabel={backLabel} onBack={() => setEditingChannelId("")} />
-                <ChannelEditorPanel channel={editingChannel} onChange={saveChannel} onPickModels={() => setPickingModels(true)} />
+                <SubViewHeader
+                    title={t("config.channelEditor.title")}
+                    backLabel={backLabel}
+                    onBack={() => {
+                        discardDraft();
+                        setEditingChannelId("");
+                    }}
+                />
+                <ChannelEditorPanel key={editingChannel.id} channel={editingChannel} onChange={saveChannel} onPickModels={() => setPickingModels(true)} onSwitchChannel={switchChannel} />
             </div>
         );
     }
@@ -213,7 +245,18 @@ export function AppConfigPanel() {
                                     <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
                                         {t("common.edit")}
                                     </Button>
-                                    <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={() => deleteChannel(channel.id)} />
+                                    <Popconfirm
+                                        placement="topRight"
+                                        title={t("config.channels.deleteConfirm", { name: channel.name || t("config.channels.unnamed") })}
+                                        okText={t("common.delete")}
+                                        okButtonProps={{ danger: true }}
+                                        cancelText={t("common.cancel")}
+                                        disabled={config.channels.length <= 1}
+                                        onConfirm={() => deleteChannel(channel.id)}
+                                    >
+                                        {/* With a single channel the confirm is disabled and the click shows the keep-one warning instead. */}
+                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={config.channels.length <= 1 ? () => deleteChannel(channel.id) : undefined} />
+                                    </Popconfirm>
                                 </div>
                             </div>
                         ))}

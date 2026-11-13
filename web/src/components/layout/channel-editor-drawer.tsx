@@ -1,17 +1,19 @@
-import { Button, Checkbox, Input, Segmented, Select, Switch, Tooltip } from "antd";
+import { Button, Checkbox, Input, Popconfirm, Segmented, Select, Switch, Tooltip } from "antd";
 import { ArrowDown, ArrowUp, Eye, EyeOff, KeyRound, ListPlus, Trash2 } from "lucide-react";
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
-import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, useConfigStore, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
 
 // Channel editor: every change is written straight to the config store, so there is no save step.
-export function ChannelEditorPanel({ channel, onChange, onPickModels }: { channel: ModelChannel; onChange: (channel: ModelChannel) => void; onPickModels: () => void }) {
+export function ChannelEditorPanel({ channel, onChange, onPickModels, onSwitchChannel }: { channel: ModelChannel; onChange: (channel: ModelChannel) => void; onPickModels: () => void; onSwitchChannel: (channelId: string) => void }) {
     const { t } = useTranslation();
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
+    const [duplicate, setDuplicate] = useState<ModelChannel | null>(null);
+    const focusedBaseUrlRef = useRef(channel.baseUrl);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
         { label: "Gemini", value: "gemini" },
@@ -52,6 +54,14 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels }: { channe
     const setScript = (name: string, script: string) => setModels(channel.models.map((model) => (model.name === name ? { ...model, script: script || undefined } : model)));
     const removeModel = (name: string) => setModels(channel.models.filter((model) => model.name !== name));
 
+    // After the endpoint is edited, offer to jump to an existing channel that already uses the same domain.
+    const checkDuplicateBaseUrl = () => {
+        if (channel.baseUrl === focusedBaseUrlRef.current) return;
+        focusedBaseUrlRef.current = channel.baseUrl;
+        const host = channelHost(channel.baseUrl);
+        setDuplicate(host ? useConfigStore.getState().config.channels.find((item) => item.id !== channel.id && channelHost(item.baseUrl) === host) || null : null);
+    };
+
     return (
         <div>
             <div className="grid gap-4 md:grid-cols-2">
@@ -65,7 +75,28 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels }: { channe
                 </label>
                 <label className="block md:col-span-2">
                     <span className="mb-1 block text-sm font-medium">{t("config.channelEditor.baseUrl")}</span>
-                    <Input value={channel.baseUrl} onChange={(event) => patch({ baseUrl: event.target.value })} placeholder="https://api.example.com" autoComplete="off" name="canvas-provider-endpoint" data-form-type="other" />
+                    <Popconfirm
+                        open={Boolean(duplicate)}
+                        placement="bottomLeft"
+                        title={t("config.channelEditor.duplicateTitle")}
+                        description={duplicate ? t("config.channelEditor.duplicateContent", { host: channelHost(duplicate.baseUrl), name: duplicate.name || t("config.channels.unnamed") }) : null}
+                        okText={t("config.channelEditor.duplicateSwitch")}
+                        cancelText={t("config.channelEditor.duplicateStay")}
+                        onConfirm={() => duplicate && onSwitchChannel(duplicate.id)}
+                        onCancel={() => setDuplicate(null)}
+                        onOpenChange={(open) => !open && setDuplicate(null)}
+                    >
+                        <Input
+                            value={channel.baseUrl}
+                            onChange={(event) => patch({ baseUrl: event.target.value })}
+                            onFocus={() => (focusedBaseUrlRef.current = channel.baseUrl)}
+                            onBlur={checkDuplicateBaseUrl}
+                            placeholder="https://api.example.com"
+                            autoComplete="off"
+                            name="canvas-provider-endpoint"
+                            data-form-type="other"
+                        />
+                    </Popconfirm>
                 </label>
                 <div className="md:col-span-2">
                     <div className="mb-2 flex items-center justify-between gap-2">
@@ -162,6 +193,17 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels }: { channe
             />
         </div>
     );
+}
+
+// Compare channels by host (domain plus port); a missing scheme is treated as https.
+function channelHost(baseUrl: string) {
+    const value = baseUrl.trim();
+    if (!value) return "";
+    try {
+        return new URL(value.includes("://") ? value : `https://${value}`).host;
+    } catch {
+        return "";
+    }
 }
 
 // A plain text input with CSS masking instead of type="password": Chrome no longer treats it as a

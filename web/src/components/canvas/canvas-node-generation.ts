@@ -3,8 +3,9 @@ import i18n from "@/i18n";
 import { imageReferenceLabel } from "@/lib/image-reference-prompt";
 import type { ReferenceImage } from "@/types/image";
 import type { ReferenceAudio, ReferenceVideo } from "@/types/media";
+import type { Asset } from "@/stores/use-asset-store";
 import { CanvasNodeType, type CanvasConnection, type CanvasNodeData } from "@/types/canvas";
-import { getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
+import { ASSET_REFERENCE_PREFIX, getGenerationResourceNodes, getGroupResourceNodes } from "@/lib/canvas/canvas-resource-references";
 import { getNodeDefinition } from "@/lib/canvas/node-registry";
 
 export type NodeGenerationContext = {
@@ -40,8 +41,8 @@ type NodeGenerationGroupInput = {
 
 export type NodeGenerationInput = NodeGenerationResourceInput | NodeGenerationGroupInput;
 
-export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: { includeSourceImage?: boolean } = {}): NodeGenerationContext {
-    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections);
+export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], prompt: string, options: { includeSourceImage?: boolean; assets?: Asset[] } = {}): NodeGenerationContext {
+    const inputs = buildNodeGenerationInputs(nodeId, nodes, connections, options.assets);
     // Editing an existing image keeps that image as a labelled reference, so mentions and labels stay aligned with the request.
     const sourceNode = options.includeSourceImage ? nodes.find((node) => node.id === nodeId) : undefined;
     const sourceImage = sourceNode ? readNodeGenerationResource(sourceNode).filter((input) => input.type === "image") : [];
@@ -89,14 +90,26 @@ export function buildNodeGenerationContext(nodeId: string, nodes: CanvasNodeData
     };
 }
 
-export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]): NodeGenerationInput[] {
-    return getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
+export function buildNodeGenerationInputs(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], assets: Asset[] = []): NodeGenerationInput[] {
+    const nodeInputs = getGenerationResourceNodes(nodeId, nodes, connections).flatMap((node): NodeGenerationInput[] => {
         if (node.type === CanvasNodeType.Group) {
             const children = getGroupResourceNodes(node.id, nodes).flatMap(readNodeGenerationResource);
             return children.length ? [{ nodeId: node.id, type: "group", title: node.title, children }] : [];
         }
         return readNodeGenerationResource(node);
     });
+    // Library assets picked into the reference bar follow the connected nodes; deleted assets drop out.
+    const assetIds = nodes.find((node) => node.id === nodeId)?.metadata?.assetReferenceIds || [];
+    const assetById = new Map(assets.map((asset) => [asset.id, asset]));
+    return [...nodeInputs, ...assetIds.flatMap((id) => (assetById.has(id) ? [readAssetGenerationResource(assetById.get(id)!)] : []))];
+}
+
+function readAssetGenerationResource(asset: Asset): NodeGenerationResourceInput {
+    const nodeId = `${ASSET_REFERENCE_PREFIX}${asset.id}`;
+    if (asset.kind === "text") return { nodeId, type: "text", title: asset.title, text: asset.data.content };
+    if (asset.kind === "video") return { nodeId, type: "video", title: asset.title, video: { id: nodeId, name: asset.title, type: asset.data.mimeType || "video/mp4", url: asset.data.url, storageKey: asset.data.storageKey, bytes: asset.data.bytes, width: asset.data.width, height: asset.data.height } };
+    if (asset.kind === "audio") return { nodeId, type: "audio", title: asset.title, audio: { id: nodeId, name: asset.title, type: asset.data.mimeType || "audio/mpeg", url: asset.data.url, storageKey: asset.data.storageKey, durationMs: asset.data.durationMs } };
+    return { nodeId, type: "image", title: asset.title, image: { id: nodeId, name: asset.title, type: asset.data.mimeType || "image/png", dataUrl: asset.data.dataUrl, storageKey: asset.data.storageKey } };
 }
 
 function flattenGenerationInputs(inputs: NodeGenerationInput[]) {

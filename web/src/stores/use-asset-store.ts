@@ -6,11 +6,17 @@ import { localForageStorage } from "@/lib/localforage-storage";
 import { cleanupUnusedImages, ensureImagePreview, previewUrlFor, resolveImageUrl, uploadImage } from "@/services/image-storage";
 import { cleanupUnusedMedia, resolveMediaUrl } from "@/services/file-storage";
 
-export type AssetKind = "text" | "image" | "video";
+export type AssetKind = "text" | "image" | "video" | "audio";
+export const ASSET_KINDS: AssetKind[] = ["image", "video", "audio", "text"];
 export type TextAsset = AssetBase<"text"> & { data: { content: string } };
 export type ImageAsset = AssetBase<"image"> & { data: { dataUrl: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
 export type VideoAsset = AssetBase<"video"> & { data: { url: string; storageKey?: string; width: number; height: number; bytes: number; mimeType: string } };
-export type Asset = TextAsset | ImageAsset | VideoAsset;
+export type AudioAsset = AssetBase<"audio"> & { data: { url: string; storageKey?: string; bytes: number; mimeType: string; durationMs?: number } };
+export type Asset = TextAsset | ImageAsset | VideoAsset | AudioAsset;
+type WithoutAssetIdentity<T> = T extends Asset ? Omit<T, "id" | "createdAt" | "updatedAt"> : never;
+export type AssetDraft = WithoutAssetIdentity<Asset>;
+/** A user-defined category such as 角色/场景/道具. Assets without one stay in the built-in category of their kind. */
+export type AssetCategory = { id: string; name: string; updatedAt: string };
 
 type AssetBase<T extends AssetKind> = {
     id: string;
@@ -18,6 +24,8 @@ type AssetBase<T extends AssetKind> = {
     title: string;
     coverUrl: string;
     tags: string[];
+    /** Custom category id; empty means the asset sits in the built-in category of its kind. */
+    categoryId?: string;
     source?: string;
     note?: string;
     createdAt: string;
@@ -28,12 +36,22 @@ type AssetBase<T extends AssetKind> = {
 type AssetStore = {
     hydrated: boolean;
     assets: Asset[];
-    addAsset: (asset: Omit<Asset, "id" | "createdAt" | "updatedAt">) => string;
+    categories: AssetCategory[];
+    addAsset: (asset: AssetDraft) => string;
+    addCategory: (name: string) => string;
+    renameCategory: (id: string, name: string) => void;
+    removeCategory: (id: string) => void;
+    mergeCategories: (categories: AssetCategory[]) => void;
     updateAsset: (id: string, patch: Partial<Omit<Asset, "id" | "createdAt">>) => void;
     removeAsset: (id: string) => void;
     replaceAssets: (assets: Asset[]) => void;
     cleanupImages: (extra?: unknown) => void;
 };
+
+/** The category an asset is listed under: its custom category, or the built-in category named after its kind. */
+export function assetCategoryKey(asset: Asset) {
+    return asset.categoryId || asset.kind;
+}
 
 // 卡片用缩略图渲染，自定义封面（远程地址或单独上传的封面）保持原样。
 export function assetCoverUrl(asset: Asset) {
@@ -51,7 +69,7 @@ const assetStorage: PersistStorage<AssetStore> = {
         const parsed = JSON.parse(value) as StorageValue<AssetStore>;
         parsed.state.assets = await Promise.all(
             parsed.state.assets.map(async (asset) => {
-                if (asset.kind === "video" && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } };
+                if ((asset.kind === "video" || asset.kind === "audio") && asset.data.storageKey) return { ...asset, data: { ...asset.data, url: await resolveMediaUrl(asset.data.storageKey, asset.data.url) } } as Asset;
                 if (asset.kind !== "image") return asset;
                 if (asset.data.storageKey) {
                     void ensureImagePreview(asset.data.storageKey);
@@ -77,6 +95,22 @@ export const useAssetStore = create<AssetStore>()(
         (set, get) => ({
             hydrated: false,
             assets: [],
+            categories: [],
+            addCategory: (name) => {
+                const existing = get().categories.find((category) => category.name === name.trim());
+                if (existing) return existing.id;
+                const id = nanoid();
+                set((state) => ({ categories: [...state.categories, { id, name: name.trim(), updatedAt: new Date().toISOString() }] }));
+                return id;
+            },
+            renameCategory: (id, name) => set((state) => ({ categories: state.categories.map((category) => (category.id === id ? { ...category, name: name.trim(), updatedAt: new Date().toISOString() } : category)) })),
+            // Assets of a removed category fall back to the built-in category of their kind.
+            removeCategory: (id) =>
+                set((state) => ({
+                    categories: state.categories.filter((category) => category.id !== id),
+                    assets: state.assets.map((asset) => (asset.categoryId === id ? ({ ...asset, categoryId: undefined, updatedAt: new Date().toISOString() } as Asset) : asset)),
+                })),
+            mergeCategories: (categories) => set((state) => ({ categories: [...state.categories, ...categories.filter((category) => !state.categories.some((item) => item.id === category.id))] })),
             addAsset: (asset) => {
                 const now = new Date().toISOString();
                 const id = nanoid();
@@ -105,7 +139,7 @@ export const useAssetStore = create<AssetStore>()(
         {
             name: ASSET_STORE_KEY,
             storage: assetStorage,
-            partialize: (state) => ({ assets: state.assets }) as StorageValue<AssetStore>["state"],
+            partialize: (state) => ({ assets: state.assets, categories: state.categories }) as StorageValue<AssetStore>["state"],
             onRehydrateStorage: () => () => {
                 useAssetStore.setState({ hydrated: true });
             },

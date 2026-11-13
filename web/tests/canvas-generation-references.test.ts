@@ -1,5 +1,6 @@
 import { afterAll, expect, test } from "bun:test";
 import type { CanvasConnection, CanvasNodeData } from "../src/types/canvas";
+import type { Asset } from "../src/stores/use-asset-store";
 
 const values = new Map<string, string>();
 const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
@@ -18,7 +19,8 @@ afterAll(() => {
 
 const { CanvasNodeType } = await import("../src/types/canvas");
 const { buildNodeGenerationContext } = await import("../src/components/canvas/canvas-node-generation");
-const { getNodeReferenceNodes } = await import("../src/lib/canvas/canvas-resource-references");
+const { getNodeReferenceNodes, buildNodeMentionReferences, assetIdsFromReferenceIds } = await import("../src/lib/canvas/canvas-resource-references");
+const { assetInCategory, assetKindOfFile } = await import("../src/lib/asset-library");
 const { buildImageReferencePromptText } = await import("../src/lib/image-reference-prompt");
 
 const node = (id: string, type: CanvasNodeData["type"], content?: string, metadata: CanvasNodeData["metadata"] = {}): CanvasNodeData => ({
@@ -124,6 +126,48 @@ test("saved references merge a directly connected text node", () => {
     const connections = [connection(imageA.id, result.id), connection(imageB.id, result.id), connection(text.id, result.id)];
 
     expect(getNodeReferenceNodes(result.id, nodes, connections).map((item) => item.id)).toEqual([imageA.id, imageB.id, text.id]);
+});
+
+const libraryAssets: Asset[] = [
+    { id: "portrait", kind: "image", title: "角色图", coverUrl: "", tags: [], categoryId: "characters", createdAt: "", updatedAt: "", data: { dataUrl: "data:image/png;base64,CC==", width: 10, height: 10, bytes: 1, mimeType: "image/png" } },
+    { id: "description", kind: "text", title: "角色描述", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { content: "蓝色长裙" } },
+    { id: "voice", kind: "audio", title: "配音", coverUrl: "", tags: [], createdAt: "", updatedAt: "", data: { url: "blob:voice", storageKey: "audio:voice", bytes: 10, mimeType: "audio/wav" } },
+];
+
+test("library references work without adding canvas nodes or connections", () => {
+    const target = node("library-target", CanvasNodeType.Config, undefined, { assetReferenceIds: ["portrait", "description", "voice"] });
+    const context = buildNodeGenerationContext(target.id, [target], [], "用户要求", { assets: libraryAssets });
+    expect(context.prompt).toBe("蓝色长裙\n\n用户要求");
+    expect(context.referenceImages.map((image) => image.id)).toEqual(["asset:portrait"]);
+    expect(context.referenceAudios.map((audio) => audio.storageKey)).toEqual(["audio:voice"]);
+    expect(assetIdsFromReferenceIds(context.referenceNodeIds)).toEqual(["portrait", "description", "voice"]);
+});
+
+test("library mentions inline text and order media while retaining connected inputs", () => {
+    const target = node("library-target", CanvasNodeType.Image, undefined, { assetReferenceIds: ["portrait", "description"] });
+    const nodes = [imageA, target];
+    const connections = [connection(imageA.id, target.id)];
+    const context = buildNodeGenerationContext(target.id, nodes, connections, "让 @[node:asset:portrait] 穿 @[node:asset:description]", { assets: libraryAssets });
+    expect(context.prompt).toBe("让 图片1 穿 蓝色长裙");
+    expect(context.referenceImages.map((image) => image.id)).toEqual(["asset:portrait", imageA.id]);
+    const mentions = buildNodeMentionReferences(target, nodes, connections, libraryAssets);
+    expect(mentions.map((item) => item.nodeId)).toEqual([imageA.id, "asset:portrait", "asset:description"]);
+});
+
+test("removed library references cannot reappear from saved reference ids or mentions", () => {
+    const target = node("library-target", CanvasNodeType.Image, undefined, { assetReferenceIds: [], referenceNodeIds: ["asset:portrait"] });
+    const context = buildNodeGenerationContext(target.id, [target], [], "修改 @[node:asset:portrait]", { assets: libraryAssets });
+    expect(context.referenceImages).toEqual([]);
+    expect(context.prompt).toBe("修改");
+});
+
+test("custom categories replace rather than duplicate the built-in media category", () => {
+    expect(assetInCategory(libraryAssets[0], "characters")).toBe(true);
+    expect(assetInCategory(libraryAssets[0], "image")).toBe(false);
+    expect(assetInCategory(libraryAssets[0], "all")).toBe(true);
+    expect(assetInCategory(libraryAssets[2], "audio")).toBe(true);
+    expect(assetKindOfFile(new File([""], "voice.WAV"))).toBe("audio");
+    expect(assetKindOfFile(new File([""], "document.txt", { type: "text/plain" }))).toBe(null);
 });
 
 test("saved references merge a valid text mention", () => {
