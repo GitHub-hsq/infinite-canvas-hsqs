@@ -1,8 +1,6 @@
 const ACCESS_COOKIE = "__Host-suparkai_access";
 const LOGIN_PATH = "/__site-login";
 const LOGOUT_PATH = "/__site-logout";
-const PASSWORD_SHA256 = "ef20fe59b4907ed98a5d495b24863b400a5b150835ac922085273f7f6b7eb517";
-const ACCESS_TOKEN = "5e304d07272ffff8ee27039bfff5dfda3ccd4fb1809f96ac08c1c80e2024930a";
 
 export const config = { runtime: "nodejs" };
 
@@ -27,11 +25,13 @@ export default async function proxy(request: Request) {
         const password = String(form.get("password") || "");
         const returnTo = safeReturnTo(String(form.get("returnTo") || "/"));
         if (await passwordMatches(password)) {
+            const accessToken = await createAccessToken();
+            if (!accessToken) return configurationErrorResponse(request.method === "HEAD");
             return new Response(null, {
                 status: 303,
                 headers: {
                     Location: returnTo,
-                    "Set-Cookie": `${ACCESS_COOKIE}=${ACCESS_TOKEN}; Path=/; HttpOnly; Secure; SameSite=Strict`,
+                    "Set-Cookie": `${ACCESS_COOKIE}=${accessToken}; Path=/; HttpOnly; Secure; SameSite=Strict`,
                     "Cache-Control": "no-store",
                 },
             });
@@ -50,14 +50,27 @@ async function hasValidAccessCookie(request: Request) {
         .map((part) => part.trim())
         .find((part) => part.startsWith(`${ACCESS_COOKIE}=`))
         ?.slice(ACCESS_COOKIE.length + 1);
-    return Boolean(rawCookie && constantTimeEqual(rawCookie, ACCESS_TOKEN));
+    const accessToken = await createAccessToken();
+    return Boolean(rawCookie && accessToken && constantTimeEqual(rawCookie, accessToken));
+}
+
+async function createAccessToken() {
+    const secret = process.env.SITE_ACCESS_SECRET || "";
+    if (!secret) return "";
+    const key = await crypto.subtle.importKey("raw", new TextEncoder().encode(secret), { name: "HMAC", hash: "SHA-256" }, false, ["sign"]);
+    const signature = await crypto.subtle.sign("HMAC", key, new TextEncoder().encode("suparkai-access-v1"));
+    return toHex(signature);
 }
 
 async function passwordMatches(password: string) {
-    if (!password) return false;
+    const expected = process.env.SITE_ACCESS_PASSWORD_SHA256 || "";
+    if (!password || !expected) return false;
     const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(password));
-    const actual = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
-    return constantTimeEqual(actual, PASSWORD_SHA256);
+    return constantTimeEqual(toHex(digest), expected);
+}
+
+function toHex(value: ArrayBuffer) {
+    return Array.from(new Uint8Array(value), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 function constantTimeEqual(actual: string, expected: string) {
@@ -68,6 +81,13 @@ function constantTimeEqual(actual: string, expected: string) {
 
 function safeReturnTo(value: string) {
     return value.startsWith("/") && !value.startsWith("//") ? value : "/";
+}
+
+function configurationErrorResponse(headRequest: boolean) {
+    return new Response(headRequest ? null : "网站访问验证尚未完成配置。", {
+        status: 503,
+        headers: { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-store", "X-Robots-Tag": "noindex, nofollow" },
+    });
 }
 
 function loginResponse(returnTo: string, invalid: boolean, headRequest: boolean) {
