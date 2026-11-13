@@ -49,8 +49,21 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Check publish credentials
+        id: auth
+        shell: bash
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: |
+          if [ -n "$NODE_AUTH_TOKEN" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "NPM_TOKEN is not configured; keeping the tested package ready for manual publication."
+          fi
+
       - name: Publish
-        if: steps.version.outputs.exists == 'false'
+        if: steps.version.outputs.exists == 'false' && steps.auth.outputs.available == 'true'
         run: npm publish --access public --provenance
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
