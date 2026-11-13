@@ -10,7 +10,6 @@ import { ChannelEditorPanel } from "@/components/layout/channel-editor-drawer";
 import { ConfigLocalProxy } from "@/components/layout/config-local-proxy";
 import { ConfigPromptSources } from "@/components/layout/config-prompt-sources";
 import { ConfigLocalStorage } from "@/components/layout/config-local-storage";
-import { ModelSelectPanel } from "@/components/layout/model-select-modal";
 import { DOCS_URL } from "@/constant/env";
 import type { AppLocale } from "@/i18n";
 import { exportAppConfig, importAppConfig } from "@/services/config-file";
@@ -71,7 +70,6 @@ export function AppConfigPanel() {
     const [expandedTab, setExpandedTab] = useState<ConfigTabKey | null>(null);
     const [editingChannelId, setEditingChannelId] = useState("");
     const draftRef = useRef<{ id: string; snapshot: string } | null>(null);
-    const [pickingModels, setPickingModels] = useState(false);
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
@@ -195,15 +193,6 @@ export function AppConfigPanel() {
         }
     };
 
-    if (editingChannel && pickingModels) {
-        return (
-            <div>
-                <SubViewHeader title={t("config.modelSelect.title")} backLabel={backLabel} onBack={() => setPickingModels(false)} />
-                <ModelSelectPanel channel={editingChannel} onChange={(models) => saveChannel({ ...editingChannel, models })} />
-            </div>
-        );
-    }
-
     if (editingChannel) {
         return (
             <div>
@@ -215,7 +204,7 @@ export function AppConfigPanel() {
                         setEditingChannelId("");
                     }}
                 />
-                <ChannelEditorPanel key={editingChannel.id} channel={editingChannel} onChange={saveChannel} onPickModels={() => setPickingModels(true)} onSwitchChannel={switchChannel} />
+                <ChannelEditorPanel key={editingChannel.id} channel={editingChannel} onChange={saveChannel} onSwitchChannel={switchChannel} />
             </div>
         );
     }

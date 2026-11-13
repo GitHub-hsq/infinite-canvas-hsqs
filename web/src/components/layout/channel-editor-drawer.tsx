@@ -1,18 +1,21 @@
-import { Button, Checkbox, Input, Popconfirm, Segmented, Select, Switch, Tooltip } from "antd";
-import { ArrowDown, ArrowUp, Eye, EyeOff, KeyRound, ListPlus, Trash2 } from "lucide-react";
+import { App, Button, Checkbox, Input, Popconfirm, Segmented, Select, Switch, Tooltip } from "antd";
+import { ArrowDown, ArrowUp, Eye, EyeOff, KeyRound, RefreshCw, Trash2 } from "lucide-react";
 import { useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
-import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, useConfigStore, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { fetchImageModels } from "@/services/api/image";
+import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, guessCapability, useConfigStore, withResolvedApiKeyContext, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
 
 // Channel editor: every change is written straight to the config store, so there is no save step.
-export function ChannelEditorPanel({ channel, onChange, onPickModels, onSwitchChannel }: { channel: ModelChannel; onChange: (channel: ModelChannel) => void; onPickModels: () => void; onSwitchChannel: (channelId: string) => void }) {
+export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { channel: ModelChannel; onChange: (channel: ModelChannel) => void; onSwitchChannel: (channelId: string) => void }) {
     const { t } = useTranslation();
+    const { message } = App.useApp();
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
     const [duplicate, setDuplicate] = useState<ModelChannel | null>(null);
+    const [fetchingKeyId, setFetchingKeyId] = useState<string | null>(null);
     const focusedBaseUrlRef = useRef(channel.baseUrl);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
@@ -44,6 +47,34 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels, onSwitchCh
                     apiKeys.find((candidate) => candidate.enabled !== false && candidate.apiKey.trim() && candidate.capabilities.includes(value))?.id === item.id,
             )
             .map(({ label }) => label);
+
+    // Fetch the model list with just this key and merge it into the channel model list, keeping existing entries untouched.
+    const fetchKeyModels = async (item: ChannelApiKey, index: number) => {
+        const apiKey = item.apiKey.trim();
+        if (!channel.baseUrl.trim() || !apiKey) {
+            message.error(t("config.channelEditor.fetchModelsMissing"));
+            return;
+        }
+        setFetchingKeyId(item.id);
+        try {
+            const names = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey, apiFormat: channel.apiFormat, proxyMode: channel.proxyMode });
+            const known = new Set(channel.models.map((model) => model.name));
+            const added = names.filter((name) => !known.has(name)).map((name) => ({ name, capability: guessCapability(name) }));
+            setModels([...channel.models, ...added]);
+            message.success(t("config.channelEditor.modelsFetched", { total: names.length, added: added.length }));
+        } catch (error) {
+            const text = error instanceof Error ? error.message : t("config.channelEditor.fetchModelsFailed");
+            message.error(
+                withResolvedApiKeyContext(text, {
+                    resolvedChannelName: channel.name,
+                    resolvedApiKeyName: item.name.trim() || t("config.channelEditor.apiKeyName", { index: index + 1 }),
+                    resolvedApiKeySuffix: channelApiKeySuffix(apiKey),
+                }),
+            );
+        } finally {
+            setFetchingKeyId(null);
+        }
+    };
 
     const changeApiFormat = (apiFormat: ApiCallFormat) => {
         const baseUrl = !channel.baseUrl.trim() || channel.baseUrl.trim() === defaultBaseUrlForApiFormat(channel.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : channel.baseUrl;
@@ -138,12 +169,24 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels, onSwitchCh
                                     <span className="text-xs text-stone-500">{t("config.channelEditor.apiKeyCapabilities")}</span>
                                     <Checkbox.Group value={item.capabilities} options={capabilityOptions} onChange={(capabilities) => updateApiKey(item.id, { capabilities: capabilities as ModelCapability[] })} />
                                 </div>
-                                <div className="mt-2 text-xs text-stone-500">
-                                    {item.enabled === false
-                                        ? t("config.channelEditor.apiKeyDisabledHint")
-                                        : primaryCapabilities(item).length
-                                          ? t("config.channelEditor.apiKeyPrimaryFor", { capabilities: primaryCapabilities(item).join(t("config.channelEditor.capabilitySeparator")) })
-                                          : t("config.channelEditor.apiKeyStandbyHint")}
+                                <div className="mt-2 flex items-center justify-between gap-2">
+                                    <div className="min-w-0 flex-1 text-xs text-stone-500">
+                                        {item.enabled === false
+                                            ? t("config.channelEditor.apiKeyDisabledHint")
+                                            : primaryCapabilities(item).length
+                                              ? t("config.channelEditor.apiKeyPrimaryFor", { capabilities: primaryCapabilities(item).join(t("config.channelEditor.capabilitySeparator")) })
+                                              : t("config.channelEditor.apiKeyStandbyHint")}
+                                    </div>
+                                    <Button
+                                        size="small"
+                                        type="text"
+                                        icon={<RefreshCw className="size-3.5" />}
+                                        loading={fetchingKeyId === item.id}
+                                        disabled={item.enabled === false || !item.apiKey.trim() || !channel.baseUrl.trim()}
+                                        onClick={() => void fetchKeyModels(item, index)}
+                                    >
+                                        {t("config.channelEditor.fetchModels")}
+                                    </Button>
                                 </div>
                             </div>
                         ))}
@@ -152,14 +195,9 @@ export function ChannelEditorPanel({ channel, onChange, onPickModels, onSwitchCh
                 </div>
             </div>
 
-            <div className="mt-6 mb-3 flex flex-wrap items-center justify-between gap-2">
-                <div>
-                    <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
-                    <div className="mt-0.5 text-xs text-stone-500">{t("config.channelEditor.modelDescription", { count: channel.models.length })}</div>
-                </div>
-                <Button type="primary" icon={<ListPlus className="size-4" />} onClick={onPickModels}>
-                    {t("config.channelEditor.selectModels")}
-                </Button>
+            <div className="mt-6 mb-3">
+                <div className="text-sm font-semibold">{t("config.channelEditor.models")}</div>
+                <div className="mt-0.5 text-xs text-stone-500">{t("config.channelEditor.modelDescription", { count: channel.models.length })}</div>
             </div>
 
             <div className="space-y-2 rounded-lg border border-stone-200 p-2 dark:border-stone-800">
@@ -210,11 +248,11 @@ function channelHost(baseUrl: string) {
 // credential field, so it stops offering to save the API key in the password manager.
 function SecretInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
     const [visible, setVisible] = useState(false);
-    const maskedStyle = { WebkitTextSecurity: visible ? "none" : "disc" } as CSSProperties;
+    // Inline end padding for the eye button: antd v6's own .ant-input padding outranks Tailwind utilities, so a pr-* class is ignored here.
+    const maskedStyle = { WebkitTextSecurity: visible ? "none" : "disc", paddingInlineEnd: 40 } as CSSProperties;
     return (
         <div className="relative">
             <Input
-                className="pr-10"
                 type="text"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}

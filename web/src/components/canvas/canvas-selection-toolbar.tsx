@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Group, Ungroup } from "lucide-react";
+import { Group, Plus, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -18,6 +18,7 @@ export function CanvasSelectionToolbar({
     canUngroup,
     onGroup,
     onUngroup,
+    onConnectDragStart,
 }: {
     nodes: CanvasNodeData[];
     viewport: ViewportTransform;
@@ -26,6 +27,7 @@ export function CanvasSelectionToolbar({
     canUngroup: boolean;
     onGroup: () => void;
     onUngroup: () => void;
+    onConnectDragStart?: (event: React.MouseEvent) => void;
 }) {
     const { t } = useTranslation();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -56,6 +58,22 @@ export function CanvasSelectionToolbar({
                     strokeLinecap="round"
                 />
             </svg>
+            {showToolbar && onConnectDragStart ? (
+                <button
+                    type="button"
+                    aria-label={t("canvas.nodeToolbar.connectSelectionTitle")}
+                    title={t("canvas.nodeToolbar.connectSelectionTitle")}
+                    className="absolute z-[70] flex size-10 -translate-x-1/2 -translate-y-1/2 cursor-crosshair items-center justify-center rounded-full border transition-transform duration-150 hover:scale-110"
+                    style={{ left: left + width, top: top + height / 2, background: theme.toolbar.panel, borderColor: theme.node.stroke, boxShadow: "0 1px 4px rgba(0,0,0,.18)" }}
+                    onMouseDown={(event) => {
+                        event.stopPropagation();
+                        onConnectDragStart(event);
+                    }}
+                    onPointerDown={(event) => event.stopPropagation()}
+                >
+                    <Plus className="size-4" strokeWidth={2.5} style={{ color: theme.node.text }} />
+                </button>
+            ) : null}
             {showActions ? (
                 <div
                     className="absolute z-[70] flex h-12 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-[18px] border border-black/10 bg-white text-[15px] text-[#242529] shadow-[0_8px_28px_rgba(15,23,42,.12)]"

@@ -151,6 +151,8 @@ export type CanvasAssistantSession = {
 export type ConnectionHandle = {
     nodeId: string;
     handleType: "source" | "target";
+    // Multi-select batch drag: every listed node connects together; nodeId is only the visual anchor.
+    sourceNodeIds?: string[];
 };
 
 export type SelectionBox = {

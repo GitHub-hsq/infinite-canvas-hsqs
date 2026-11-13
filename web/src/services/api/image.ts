@@ -1,7 +1,7 @@
 import axios from "axios";
 
 import i18n from "@/i18n";
-import { buildApiUrl, channelApiKeyEntries, channelApiKeySuffix, resolveModelRequestConfig, resolveModelScript, withLocalProxy, withResolvedApiKeyContext, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
+import { buildApiUrl, resolveModelRequestConfig, resolveModelScript, withLocalProxy, withResolvedApiKeyContext, type AiConfig, type ModelChannel } from "@/stores/use-config-store";
 import { normalizePluginImages, runModelPlugin } from "./model-plugin";
 import { nanoid } from "nanoid";
 import { dataUrlToFile } from "@/lib/image-utils";
@@ -901,31 +901,6 @@ export async function fetchImageModels(config: Pick<AiConfig, "baseUrl" | "apiKe
     } catch (error) {
         throw new Error(readAxiosError(error, apiText("modelReadFailed")));
     }
-}
-
-export async function fetchChannelModels(channel: ModelChannel) {
-    const apiKeys = channelApiKeyEntries(channel);
-    const results = await Promise.allSettled(
-        apiKeys.map(async (item) => {
-            try {
-                return await fetchImageModels({ baseUrl: channel.baseUrl, apiKey: item.apiKey, apiFormat: channel.apiFormat, proxyMode: channel.proxyMode });
-            } catch (error) {
-                const message = error instanceof Error ? error.message : apiText("modelReadFailed");
-                throw new Error(
-                    withResolvedApiKeyContext(message, {
-                        resolvedChannelName: channel.name,
-                        resolvedApiKeyName: item.name,
-                        resolvedApiKeySuffix: channelApiKeySuffix(item.apiKey),
-                    }),
-                );
-            }
-        }),
-    );
-    const succeeded = results.filter((result): result is PromiseFulfilledResult<string[]> => result.status === "fulfilled");
-    if (succeeded.length) return Array.from(new Set(succeeded.flatMap((result) => result.value))).sort((a, b) => a.localeCompare(b));
-    const failure = results.find((result): result is PromiseRejectedResult => result.status === "rejected");
-    if (failure) throw failure.reason;
-    return [];
 }
 
 const defaultGeminiConfig: Pick<AiConfig, "baseUrl" | "apiKey" | "apiFormat" | "model" | "systemPrompt"> = {

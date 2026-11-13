@@ -725,18 +725,18 @@ function InfiniteCanvasPage() {
 
     const connectNodes = useCallback(
         (current: ConnectionHandle, targetNodeId: string) => {
-            if (current.nodeId === targetNodeId) return;
-
-            const connection = normalizeConnection(current.nodeId, targetNodeId, nodesRef.current, current.handleType);
-            if (!connection) {
+            const validConnections = (current.sourceNodeIds || [current.nodeId]).flatMap((sourceId) => {
+                const connection = normalizeConnection(sourceId, targetNodeId, nodesRef.current, current.handleType);
+                return connection ? [connection] : [];
+            });
+            if (!validConnections.length) {
                 message.warning(t("canvas.projectPage.configConnection"));
                 return;
             }
-            const { fromNodeId, toNodeId } = connection;
-            const exists = connectionsRef.current.some((conn) => conn.fromNodeId === fromNodeId && conn.toNodeId === toNodeId);
-            if (!exists) {
-                setConnections((prev) => [...prev, { id: `conn-${Date.now()}`, fromNodeId, toNodeId }]);
-            }
+            setConnections((prev) => {
+                const additions = validConnections.filter((connection) => !prev.some((conn) => conn.fromNodeId === connection.fromNodeId && conn.toNodeId === connection.toNodeId));
+                return additions.length ? [...prev, ...additions.map((connection) => ({ id: nanoid(), ...connection }))] : prev;
+            });
             setContextMenu(null);
         },
         [message, t],
@@ -759,13 +759,17 @@ function InfiniteCanvasPage() {
             }
             // The drop point is the new card's left-edge midpoint, so the card opens to the right of the pointer.
             newNode.position = { x: pending.position.x, y: pending.position.y - newNode.height / 2 };
-            const connection = normalizeConnection(pending.connection.nodeId, newNode.id, [...nodesRef.current, newNode], pending.connection.handleType);
-            if (!connection) {
+            const nextNodes = [...nodesRef.current, newNode];
+            const newConnections = (pending.connection.sourceNodeIds || [pending.connection.nodeId]).flatMap((sourceId) => {
+                const connection = normalizeConnection(sourceId, newNode.id, nextNodes, pending.connection.handleType);
+                return connection ? [{ id: nanoid(), ...connection }] : [];
+            });
+            if (!newConnections.length) {
                 message.warning(t("canvas.projectPage.configConnection"));
                 return;
             }
             setNodes((prev) => [...prev, newNode]);
-            setConnections((prev) => [...prev, { id: nanoid(), ...connection }]);
+            setConnections((prev) => [...prev, ...newConnections]);
             setSelectedNodeIds(new Set([newNode.id]));
             setSelectedConnectionId(null);
             if (type !== CanvasNodeType.Text && type !== CanvasNodeType.Audio && type !== CanvasNodeType.Config) setDialogNodeId(newNode.id);
@@ -786,6 +790,7 @@ function InfiniteCanvasPage() {
             const scale = Math.max(viewportRef.current.k, 0.05);
             const padding = CONNECTION_NODE_HIT_PADDING / scale;
             const handleRadius = CONNECTION_HANDLE_HIT_RADIUS / scale;
+            const sourceIds = current.sourceNodeIds || [current.nodeId];
             let isNearNode = false;
             let bestNodeId: string | null = null;
             let bestPriority = Number.POSITIVE_INFINITY;
@@ -800,7 +805,7 @@ function InfiniteCanvasPage() {
 
                 if (!hitsHandle && !hitsInside && !hitsExpanded) return;
                 isNearNode = true;
-                if (node.id === current.nodeId || !normalizeConnection(current.nodeId, node.id, nodesRef.current, current.handleType)) return;
+                if (sourceIds.includes(node.id) || !sourceIds.some((sourceId) => normalizeConnection(sourceId, node.id, nodesRef.current, current.handleType))) return;
 
                 const priority = hitsInside ? 0 : hitsHandle ? 1 : 2;
                 if (priority < bestPriority) {
@@ -1927,6 +1932,22 @@ function InfiniteCanvasPage() {
             pointerClientRef.current = { x: event.clientX, y: event.clientY };
             setMouseWorld(screenToCanvas(event.clientX, event.clientY));
             setConnecting({ nodeId, handleType });
+            connectionTargetNodeIdRef.current = null;
+            setConnectionTargetNodeId(null);
+            setSelectedConnectionId(null);
+        },
+        [screenToCanvas, setConnecting],
+    );
+
+    // Dragging from the selection-box plus connects every selected node at once, like a group's source handle.
+    const handleSelectionConnectStart = useCallback(
+        (event: ReactMouseEvent) => {
+            event.stopPropagation();
+            const selectedNodes = nodesRef.current.filter((node) => selectedNodeIdsRef.current.has(node.id));
+            if (selectedNodes.length < 2) return;
+            pointerClientRef.current = { x: event.clientX, y: event.clientY };
+            setMouseWorld(screenToCanvas(event.clientX, event.clientY));
+            setConnecting({ nodeId: selectedNodes[0].id, handleType: "source", sourceNodeIds: selectedNodes.map((node) => node.id) });
             connectionTargetNodeIdRef.current = null;
             setConnectionTargetNodeId(null);
             setSelectedConnectionId(null);
@@ -3666,7 +3687,17 @@ function InfiniteCanvasPage() {
                                 }}
                             />
                         ))}
-                        {connectingParams ? <ActiveConnectionPath node={nodeById.get(connectingParams.nodeId)} handle={connectingParams} mouseWorld={mouseWorld} target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined} /> : null}
+                        {connectingParams
+                            ? (connectingParams.sourceNodeIds || [connectingParams.nodeId]).map((sourceId) => (
+                                  <ActiveConnectionPath
+                                      key={sourceId}
+                                      node={nodeById.get(sourceId)}
+                                      handle={{ nodeId: sourceId, handleType: connectingParams.handleType }}
+                                      mouseWorld={mouseWorld}
+                                      target={connectionTargetNodeId ? nodeById.get(connectionTargetNodeId) : undefined}
+                                  />
+                              ))
+                            : null}
                     </svg>
 
                     {visibleNodes.map((node) => (
@@ -3798,7 +3829,16 @@ function InfiniteCanvasPage() {
                 />
 
                 {hasMultipleSelectedNodes && !selectionBox ? (
-                    <CanvasSelectionToolbar nodes={selectedNodes} viewport={viewport} showToolbar={!isNodeDragging && !isNodeResizing} canGroup={canGroupSelection} canUngroup={canUngroupSelection} onGroup={groupSelection} onUngroup={ungroupSelection} />
+                    <CanvasSelectionToolbar
+                        nodes={selectedNodes}
+                        viewport={viewport}
+                        showToolbar={!isNodeDragging && !isNodeResizing}
+                        canGroup={canGroupSelection}
+                        canUngroup={canUngroupSelection}
+                        onGroup={groupSelection}
+                        onUngroup={ungroupSelection}
+                        onConnectDragStart={handleSelectionConnectStart}
+                    />
                 ) : null}
 
                 <CanvasToolbar
