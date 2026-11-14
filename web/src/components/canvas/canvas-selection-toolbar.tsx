@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Group, Plus, Ungroup } from "lucide-react";
+import { Group, LayoutGrid, Plus, Ungroup } from "lucide-react";
 import { Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -18,6 +18,7 @@ export function CanvasSelectionToolbar({
     canUngroup,
     onGroup,
     onUngroup,
+    onOrganize,
     onConnectDragStart,
 }: {
     nodes: CanvasNodeData[];
@@ -27,6 +28,7 @@ export function CanvasSelectionToolbar({
     canUngroup: boolean;
     onGroup: () => void;
     onUngroup: () => void;
+    onOrganize?: () => void;
     onConnectDragStart?: (event: React.MouseEvent) => void;
 }) {
     const { t } = useTranslation();
@@ -83,6 +85,7 @@ export function CanvasSelectionToolbar({
                 >
                     {canGroup ? <SelectionAction title={t("canvas.nodeToolbar.groupTitle")} label={t("canvas.nodeToolbar.group")} icon={<Group className="size-4" />} onClick={onGroup} /> : null}
                     {canUngroup ? <SelectionAction title={t("canvas.nodeToolbar.ungroupTitle")} label={t("canvas.nodeToolbar.ungroup")} icon={<Ungroup className="size-4" />} onClick={onUngroup} /> : null}
+                    {onOrganize ? <SelectionAction title={t("canvas.nodeToolbar.organizeTitle")} label={t("canvas.nodeToolbar.organize")} icon={<LayoutGrid className="size-4" />} onClick={onOrganize} /> : null}
                 </div>
             ) : null}
         </>

@@ -116,6 +116,7 @@ type NodeContentRendererProps = {
     onDeleteBatchImage?: (imageId: string) => void;
     onViewBatchImage?: (imageId: string) => void;
     groupChildCount: number;
+    onRenameClick?: () => void;
 };
 
 export const CanvasNode = React.memo(function CanvasNode({
@@ -360,7 +361,7 @@ export const CanvasNode = React.memo(function CanvasNode({
             }}
             onContextMenu={(event) => onContextMenu(event, data.id)}
         >
-            {(isSelected || hovered || isEditingTitle) && (
+            {((isGroup ? isEditingTitle : isSelected || hovered || isEditingTitle)) && (
                 <div data-node-title className="absolute left-0 top-[-28px] z-[65] flex w-full min-w-0 items-center gap-1 overflow-hidden" onMouseDown={(event) => event.stopPropagation()} onPointerDown={(event) => event.stopPropagation()}>
                     <NodeTitleIcon type={data.type} />
                     {isEditingTitle ? (
@@ -469,6 +470,10 @@ export const CanvasNode = React.memo(function CanvasNode({
                         onDeleteBatchImage={(imageId) => onDeleteBatchImage?.(data.id, imageId)}
                         onViewBatchImage={(imageId) => onViewImage?.(data, imageId)}
                         groupChildCount={groupChildCount}
+                        onRenameClick={() => {
+                            setIsEditingTitle(true);
+                            onTitleEditingChange?.(data.id, true);
+                        }}
                     />
                 </div>
 
@@ -539,13 +544,22 @@ const nodeContentRenderers = {
     [CanvasNodeType.Group]: GroupNodeContent,
 } satisfies Record<CanvasNodeType, (props: NodeContentRendererProps) => ReactNode>;
 
-function GroupNodeContent({ node, theme, groupChildCount }: NodeContentRendererProps) {
+function GroupNodeContent({ node, theme, groupChildCount, onRenameClick }: NodeContentRendererProps) {
     const { t } = useTranslation();
     return (
         <div className="pointer-events-none flex h-full w-full p-3">
-            <div className="flex h-7 max-w-full items-center gap-2 px-1 text-xs font-medium" style={{ color: theme.node.text }}>
+            {/* Groups show only this in-place header (the card filename is hidden for them), so it carries the rename click. */}
+            <div
+                className="pointer-events-auto flex h-7 max-w-full items-center gap-2 px-1 text-xs font-medium"
+                style={{ color: theme.node.text }}
+                title={t("canvas.node.renameHint")}
+                onMouseDown={(event) => {
+                    event.stopPropagation();
+                    onRenameClick?.();
+                }}
+            >
                 <Group className="size-3.5 shrink-0" style={{ color: theme.node.muted }} />
-                <span className="truncate">{node.title || t("canvas.node.group")}</span>
+                <span className="cursor-text truncate">{node.title || t("canvas.node.group")}</span>
                 <span className="shrink-0 text-[11px] font-normal" style={{ color: theme.node.muted }}>
                     {t("canvas.node.nodeCount", { count: groupChildCount })}
                 </span>

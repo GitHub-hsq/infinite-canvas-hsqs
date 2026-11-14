@@ -110,6 +110,86 @@ export function exportEditorBlob(image: HTMLImageElement, snapshot: EditorSnapsh
     });
 }
 
+export const EDITOR_COMPRESS_TARGET_BYTES = 5 * 1024 * 1024;
+const EDITOR_QUALITY_LOW = 0.3;
+const EDITOR_QUALITY_HIGH = 0.95;
+
+export type EditorCompressResult = { blob: Blob; format: string; quality: number; scale: number };
+
+function encodeCanvas(canvas: HTMLCanvasElement, mime: string, quality: number) {
+    return new Promise<Blob>((resolve, reject) => {
+        try {
+            canvas.toBlob((blob) => (blob ? resolve(blob) : reject(new Error("Image export failed"))), mime, quality);
+        } catch (error) {
+            reject(error);
+        }
+    });
+}
+
+function canvasHasAlpha(source: HTMLCanvasElement) {
+    const scale = Math.min(1, 256 / Math.max(source.width, source.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(source.width * scale));
+    canvas.height = Math.max(1, Math.round(source.height * scale));
+    const context = canvas.getContext("2d");
+    if (!context) return false;
+    context.drawImage(source, 0, 0, canvas.width, canvas.height);
+    const data = context.getImageData(0, 0, canvas.width, canvas.height).data;
+    for (let index = 3; index < data.length; index += 4) if (data[index] < 255) return true;
+    return false;
+}
+
+// Binary-search the highest encoder quality whose file fits the byte target; downscale only as a last resort.
+async function searchQuality(canvas: HTMLCanvasElement, mime: string, targetBytes: number) {
+    let bottom = EDITOR_QUALITY_LOW;
+    let top = EDITOR_QUALITY_HIGH;
+    let best: Blob | null = null;
+    let bestQuality = EDITOR_QUALITY_LOW;
+    let smallest = await encodeCanvas(canvas, mime, top);
+    if (smallest.size <= targetBytes) return { blob: smallest, quality: top };
+    while (top - bottom > 0.02) {
+        const mid = (bottom + top) / 2;
+        const blob = await encodeCanvas(canvas, mime, mid);
+        if (blob.size < smallest.size) smallest = blob;
+        if (blob.size <= targetBytes) {
+            bottom = mid;
+            best = blob;
+            bestQuality = mid;
+        } else {
+            top = mid;
+        }
+    }
+    return best ? { blob: best, quality: bestQuality } : null;
+}
+
+export async function exportEditorCompressedBlob(image: HTMLImageElement, snapshot: EditorSnapshot, targetBytes = EDITOR_COMPRESS_TARGET_BYTES): Promise<EditorCompressResult> {
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(snapshot.width));
+    canvas.height = Math.max(1, Math.round(snapshot.height));
+    renderEditorScene(canvas, image, snapshot);
+    const alpha = canvasHasAlpha(canvas);
+    const mime = alpha ? "image/webp" : "image/jpeg";
+    const format = alpha ? "WebP" : "JPEG";
+    const full = await searchQuality(canvas, mime, targetBytes);
+    if (full) return { blob: full.blob, format, quality: Math.round(full.quality * 100), scale: 1 };
+
+    // Even the lowest quality misses the target: shrink the image and search again on each smaller size.
+    for (const scale of [0.8, 0.64, 0.5, 0.4]) {
+        const scaled = document.createElement("canvas");
+        scaled.width = Math.max(1, Math.round(canvas.width * scale));
+        scaled.height = Math.max(1, Math.round(canvas.height * scale));
+        const context = scaled.getContext("2d");
+        if (!context) continue;
+        context.imageSmoothingEnabled = true;
+        context.imageSmoothingQuality = "high";
+        context.drawImage(canvas, 0, 0, scaled.width, scaled.height);
+        const found = await searchQuality(scaled, mime, targetBytes);
+        if (found) return { blob: found.blob, format, quality: Math.round(found.quality * 100), scale };
+    }
+    const fallback = await encodeCanvas(canvas, mime, EDITOR_QUALITY_LOW);
+    return { blob: fallback, format, quality: Math.round(EDITOR_QUALITY_LOW * 100), scale: 1 };
+}
+
 function drawEditorObject(context: CanvasRenderingContext2D, object: EditorObject, base: HTMLCanvasElement, scaleX: number, scaleY: number) {
     context.save();
     if (object.type === "brush" || object.type === "erase") {

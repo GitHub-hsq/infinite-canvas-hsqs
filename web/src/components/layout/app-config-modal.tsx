@@ -1,6 +1,6 @@
 import { App, Button, Drawer, Form, Input, Popconfirm, Progress, Radio, Select, Switch } from "antd";
 import type { TFunction } from "i18next";
-import { ArrowLeft, BookOpen, ChevronRight, Cloud, Download, ExternalLink, Pencil, Plus, Puzzle, RefreshCw, Trash2, Upload, Wifi, X } from "lucide-react";
+import { ArrowLeft, BookOpen, ChevronRight, Cloud, Download, ExternalLink, Plus, Puzzle, RefreshCw, Trash2, Upload, Wifi, X } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { useTranslation } from "react-i18next";
 
@@ -70,6 +70,8 @@ export function AppConfigPanel() {
     const [expandedTab, setExpandedTab] = useState<ConfigTabKey | null>(null);
     const [editingChannelId, setEditingChannelId] = useState("");
     const draftRef = useRef<{ id: string; snapshot: string } | null>(null);
+    // Clicks that close a delete popover must not navigate into the editor; guard the card click for a beat after closing.
+    const deletePopoverGuardRef = useRef<{ channelId: string | null; until: number }>({ channelId: null, until: 0 });
     const [testingWebdav, setTestingWebdav] = useState(false);
     const [syncingWebdav, setSyncingWebdav] = useState(false);
     const [webdavSyncStatus, setWebdavSyncStatus] = useState("");
@@ -120,14 +122,27 @@ export function AppConfigPanel() {
         const empty = !channel.models.length && !channel.apiKey.trim() && !channel.apiKeys?.some((item) => item.apiKey.trim());
         if (untouched || (!keepIfEdited && empty)) saveConfig(withChannels(current, current.channels.filter((item) => item.id !== channel.id)));
     };
-    const discardDraftRef = useRef(discardDraft);
-    discardDraftRef.current = discardDraft;
+    // Leaving a channel editor drops key cards that were added but never filled in, like empty fresh channels.
+    const cleanupEmptyKeys = (channelId: string) => {
+        const current = useConfigStore.getState().config;
+        const channel = current.channels.find((item) => item.id === channelId);
+        if (!channel?.apiKeys?.some((item) => !item.apiKey.trim())) return;
+        const filled = channel.apiKeys.filter((item) => item.apiKey.trim());
+        saveConfig(withChannels(current, current.channels.map((item) => (item.id === channelId ? createModelChannel({ ...channel, apiKeys: filled.length ? filled : undefined }) : item))));
+    };
+    const exitChannelEditor = (keepIfEdited = true) => {
+        const editedId = editingChannelId;
+        discardDraft(keepIfEdited);
+        if (editedId) cleanupEmptyKeys(editedId);
+    };
+    const exitChannelEditorRef = useRef(exitChannelEditor);
+    exitChannelEditorRef.current = exitChannelEditor;
     // Closing the drawer while a fresh channel is still untouched removes it as well.
-    useEffect(() => () => discardDraftRef.current(), []);
+    useEffect(() => () => exitChannelEditorRef.current(), []);
 
     // Switching to a channel with the same domain discards the channel just added here if nothing but its endpoint was filled in.
     const switchChannel = (channelId: string) => {
-        discardDraft(false);
+        exitChannelEditor(false);
         setEditingChannelId(channelId);
     };
 
@@ -200,7 +215,7 @@ export function AppConfigPanel() {
                     title={t("config.channelEditor.title")}
                     backLabel={backLabel}
                     onBack={() => {
-                        discardDraft();
+                        exitChannelEditor();
                         setEditingChannelId("");
                     }}
                 />
@@ -223,7 +238,15 @@ export function AppConfigPanel() {
                     </div>
                     <div className="space-y-2">
                         {config.channels.map((channel) => (
-                            <div key={channel.id} className="flex items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 dark:border-stone-800">
+                            <div
+                                key={channel.id}
+                                className="flex cursor-pointer items-center justify-between gap-3 rounded-lg border border-stone-200 px-4 py-3 transition-colors duration-200 ease-in hover:border-stone-400 dark:border-stone-800 dark:hover:border-stone-600"
+                                onClick={(event) => {
+                                    if (event.target instanceof Element && event.target.closest("button")) return;
+                                    if (deletePopoverGuardRef.current.channelId === channel.id && deletePopoverGuardRef.current.until > Date.now()) return;
+                                    setEditingChannelId(channel.id);
+                                }}
+                            >
                                 <div className="min-w-0">
                                     <div className="truncate text-sm font-semibold">{channel.name || t("config.channels.unnamed")}</div>
                                     <div className="mt-1 truncate text-xs text-stone-500">
@@ -231,9 +254,6 @@ export function AppConfigPanel() {
                                     </div>
                                 </div>
                                 <div className="flex shrink-0 gap-2">
-                                    <Button size="small" icon={<Pencil className="size-3.5" />} onClick={() => setEditingChannelId(channel.id)}>
-                                        {t("common.edit")}
-                                    </Button>
                                     <Popconfirm
                                         placement="topRight"
                                         title={t("config.channels.deleteConfirm", { name: channel.name || t("config.channels.unnamed") })}
@@ -242,9 +262,25 @@ export function AppConfigPanel() {
                                         cancelText={t("common.cancel")}
                                         disabled={config.channels.length <= 1}
                                         onConfirm={() => deleteChannel(channel.id)}
+                                        onOpenChange={(open) => {
+                                            deletePopoverGuardRef.current = open
+                                                ? { channelId: channel.id, until: Number.POSITIVE_INFINITY }
+                                                : { channelId: channel.id, until: Date.now() + 400 };
+                                        }}
                                     >
                                         {/* With a single channel the confirm is disabled and the click shows the keep-one warning instead. */}
-                                        <Button size="small" danger icon={<Trash2 className="size-3.5" />} onClick={config.channels.length <= 1 ? () => deleteChannel(channel.id) : undefined} />
+                                        <button
+                                            type="button"
+                                            aria-label={t("common.delete")}
+                                            title={t("common.delete")}
+                                            className="grid size-9 place-items-center rounded-lg border border-transparent text-red-500! transition-colors duration-200 ease-in hover:border-red-500 hover:bg-red-500 hover:text-white! dark:text-red-400! dark:hover:bg-red-500 dark:hover:text-white!"
+                                            onClick={(event) => {
+                                                event.stopPropagation();
+                                                if (config.channels.length <= 1) deleteChannel(channel.id);
+                                            }}
+                                        >
+                                            <Trash2 className="size-5" />
+                                        </button>
                                     </Popconfirm>
                                 </div>
                             </div>

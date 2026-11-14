@@ -1,10 +1,10 @@
-import { App, Button, Checkbox, Input, Popconfirm, Segmented, Select, Switch, Tooltip } from "antd";
-import { ArrowDown, ArrowUp, Eye, EyeOff, KeyRound, RefreshCw, Trash2 } from "lucide-react";
-import { useRef, useState, type CSSProperties } from "react";
+import { App, Button, Checkbox, Input, Popconfirm, Segmented, Select, Switch, Tabs, Tooltip, type InputRef } from "antd";
+import { ArrowDown, ArrowUp, ChevronDown, Eye, EyeOff, KeyRound, RefreshCw, Search, Trash2 } from "lucide-react";
+import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useTranslation } from "react-i18next";
 
 import { fetchImageModels } from "@/services/api/image";
-import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, guessCapability, useConfigStore, withResolvedApiKeyContext, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
+import { channelApiKeySuffix, createChannelApiKey, defaultBaseUrlForApiFormat, guessCapability, normalizeChannelModels, useConfigStore, withResolvedApiKeyContext, type ApiCallFormat, type ChannelApiKey, type ChannelModel, type ModelCapability, type ModelChannel } from "@/stores/use-config-store";
 import { ModelScriptEditor } from "./model-script-editor";
 
 type ScriptTarget = { name: string; capability: ModelCapability; value: string };
@@ -15,7 +15,9 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
     const { message } = App.useApp();
     const [scriptTarget, setScriptTarget] = useState<ScriptTarget | null>(null);
     const [duplicate, setDuplicate] = useState<ModelChannel | null>(null);
-    const [fetchingKeyId, setFetchingKeyId] = useState<string | null>(null);
+    const [modelPanelKeyId, setModelPanelKeyId] = useState<string | null>(null);
+    const [fetchedByKey, setFetchedByKey] = useState<Record<string, string[]>>({});
+    const [keyInputSyncTick, setKeyInputSyncTick] = useState(0);
     const focusedBaseUrlRef = useRef(channel.baseUrl);
     const apiFormatOptions: Array<{ label: string; value: ApiCallFormat }> = [
         { label: "OpenAI", value: "openai" },
@@ -27,7 +29,23 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
     const setModels = (models: ChannelModel[]) => patch({ models });
     const apiKeys = channel.apiKeys?.length ? channel.apiKeys : [createChannelApiKey({ name: "Key 1", apiKey: channel.apiKey })];
     const setApiKeys = (items: ChannelApiKey[]) => patch({ apiKeys: items, apiKey: items.find((item) => item.enabled !== false && item.apiKey.trim())?.apiKey || "" });
-    const updateApiKey = (id: string, value: Partial<ChannelApiKey>) => setApiKeys(apiKeys.map((item) => (item.id === id ? { ...item, ...value } : item)));
+    const updateApiKey = (id: string, value: Partial<ChannelApiKey>) => {
+        // Identical keys are never allowed: they would fake a second account with the same quota.
+        if (value.apiKey !== undefined && value.apiKey.trim()) {
+            const next = value.apiKey.trim();
+            const clash = apiKeys.find((item) => item.id !== id && item.apiKey.trim() === next);
+            if (clash) {
+                message.warning({
+                    content: t("config.channelEditor.apiKeyDuplicateBlocked", { name: clash.name.trim() || t("config.channelEditor.apiKeyName", { index: apiKeys.indexOf(clash) + 1 }) }),
+                    key: "duplicate-api-key",
+                });
+                // No state change would leave the typed value in the DOM; bump a tick so the field resyncs.
+                setKeyInputSyncTick((tick) => tick + 1);
+                return;
+            }
+        }
+        setApiKeys(apiKeys.map((item) => (item.id === id ? { ...item, ...value } : item)));
+    };
     const removeApiKey = (id: string) => setApiKeys(apiKeys.filter((item) => item.id !== id));
     const addApiKey = () => setApiKeys([...apiKeys, createChannelApiKey({ name: `Key ${apiKeys.length + 1}` })]);
     const moveApiKey = (index: number, offset: -1 | 1) => {
@@ -47,34 +65,6 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
                     apiKeys.find((candidate) => candidate.enabled !== false && candidate.apiKey.trim() && candidate.capabilities.includes(value))?.id === item.id,
             )
             .map(({ label }) => label);
-
-    // Fetch the model list with just this key and merge it into the channel model list, keeping existing entries untouched.
-    const fetchKeyModels = async (item: ChannelApiKey, index: number) => {
-        const apiKey = item.apiKey.trim();
-        if (!channel.baseUrl.trim() || !apiKey) {
-            message.error(t("config.channelEditor.fetchModelsMissing"));
-            return;
-        }
-        setFetchingKeyId(item.id);
-        try {
-            const names = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey, apiFormat: channel.apiFormat, proxyMode: channel.proxyMode });
-            const known = new Set(channel.models.map((model) => model.name));
-            const added = names.filter((name) => !known.has(name)).map((name) => ({ name, capability: guessCapability(name) }));
-            setModels([...channel.models, ...added]);
-            message.success(t("config.channelEditor.modelsFetched", { total: names.length, added: added.length }));
-        } catch (error) {
-            const text = error instanceof Error ? error.message : t("config.channelEditor.fetchModelsFailed");
-            message.error(
-                withResolvedApiKeyContext(text, {
-                    resolvedChannelName: channel.name,
-                    resolvedApiKeyName: item.name.trim() || t("config.channelEditor.apiKeyName", { index: index + 1 }),
-                    resolvedApiKeySuffix: channelApiKeySuffix(apiKey),
-                }),
-            );
-        } finally {
-            setFetchingKeyId(null);
-        }
-    };
 
     const changeApiFormat = (apiFormat: ApiCallFormat) => {
         const baseUrl = !channel.baseUrl.trim() || channel.baseUrl.trim() === defaultBaseUrlForApiFormat(channel.apiFormat) ? defaultBaseUrlForApiFormat(apiFormat) : channel.baseUrl;
@@ -137,8 +127,14 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
                         </Button>
                     </div>
                     <div className="space-y-2">
-                        {apiKeys.map((item, index) => (
-                            <div key={item.id} className={`rounded-lg border p-3 ${item.enabled === false ? "border-stone-200 bg-stone-50/60 opacity-70 dark:border-stone-800 dark:bg-stone-900/30" : "border-stone-200 dark:border-stone-800"}`}>
+                        {apiKeys.map((item, index) => {
+                            const duplicateNames = item.apiKey.trim()
+                                ? apiKeys
+                                      .filter((other) => other.id !== item.id && other.apiKey.trim() && other.apiKey.trim() === item.apiKey.trim())
+                                      .map((other) => other.name.trim() || t("config.channelEditor.apiKeyName", { index: apiKeys.indexOf(other) + 1 }))
+                                : [];
+                            return (
+            <div key={item.id} className={`rounded-lg border p-3 ${item.enabled === false ? "border-stone-200 bg-stone-50/60 opacity-70 dark:border-stone-800 dark:bg-stone-900/30" : "border-stone-200 dark:border-stone-800"}`}>
                                 <div className="mb-3 flex min-w-0 items-center gap-2">
                                     <Switch size="small" checked={item.enabled !== false} onChange={(enabled) => updateApiKey(item.id, { enabled })} aria-label={t("config.channelEditor.apiKeyEnabled")} />
                                     <div className="min-w-0 flex-1 truncate text-sm font-medium">
@@ -162,7 +158,7 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
                                     </label>
                                     <label className="block min-w-0">
                                         <span className="mb-1 block text-xs text-stone-500">API Key</span>
-                                        <SecretInput value={item.apiKey} onChange={(apiKey) => updateApiKey(item.id, { apiKey })} />
+                                        <SecretInput value={item.apiKey} fieldName={`canvas-provider-key-${index + 1}`} syncTick={keyInputSyncTick} onChange={(apiKey) => updateApiKey(item.id, { apiKey })} />
                                     </label>
                                 </div>
                                 <div className="mt-3 flex flex-wrap items-center gap-3">
@@ -171,25 +167,34 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
                                 </div>
                                 <div className="mt-2 flex items-center justify-between gap-2">
                                     <div className="min-w-0 flex-1 text-xs text-stone-500">
+                                        {duplicateNames.length ? (
+                                            <div className="mb-1 font-medium text-amber-600 dark:text-amber-500">{t("config.channelEditor.apiKeyDuplicateHint", { names: duplicateNames.join(t("config.channelEditor.capabilitySeparator")) })}</div>
+                                        ) : null}
                                         {item.enabled === false
                                             ? t("config.channelEditor.apiKeyDisabledHint")
                                             : primaryCapabilities(item).length
                                               ? t("config.channelEditor.apiKeyPrimaryFor", { capabilities: primaryCapabilities(item).join(t("config.channelEditor.capabilitySeparator")) })
                                               : t("config.channelEditor.apiKeyStandbyHint")}
                                     </div>
-                                    <Button
-                                        size="small"
-                                        type="text"
-                                        icon={<RefreshCw className="size-3.5" />}
-                                        loading={fetchingKeyId === item.id}
-                                        disabled={item.enabled === false || !item.apiKey.trim() || !channel.baseUrl.trim()}
-                                        onClick={() => void fetchKeyModels(item, index)}
-                                    >
+                                    <Button size="small" type="text" onClick={() => setModelPanelKeyId((current) => (current === item.id ? null : item.id))}>
+                                        <ChevronDown className={`size-3.5 transition-transform ${modelPanelKeyId === item.id ? "rotate-180" : ""}`} />
                                         {t("config.channelEditor.fetchModels")}
                                     </Button>
                                 </div>
+                                {modelPanelKeyId === item.id ? (
+                                    <KeyModelPanel
+                                        channel={channel}
+                                        apiKeyName={item.name.trim() || t("config.channelEditor.apiKeyName", { index: index + 1 })}
+                                        apiKeyValue={item.apiKey}
+                                        canFetch={item.enabled !== false && Boolean(item.apiKey.trim()) && Boolean(channel.baseUrl.trim())}
+                                        fetched={fetchedByKey[item.id] || []}
+                                        onFetched={(models) => setFetchedByKey((prev) => ({ ...prev, [item.id]: models }))}
+                                        onChange={setModels}
+                                    />
+                                ) : null}
                             </div>
-                        ))}
+                            );
+                        })}
                     </div>
                     <div className="mt-2 text-xs text-stone-500">{t("config.channelEditor.apiKeyOrderHint")}</div>
                 </div>
@@ -246,20 +251,30 @@ function channelHost(baseUrl: string) {
 
 // A plain text input with CSS masking instead of type="password": Chrome no longer treats it as a
 // credential field, so it stops offering to save the API key in the password manager.
-function SecretInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
+// Each key card passes its own field name so the browser cannot backfill one card's value into another.
+function SecretInput({ value, onChange, fieldName, syncTick }: { value: string; onChange: (value: string) => void; fieldName: string; syncTick: number }) {
     const [visible, setVisible] = useState(false);
+    const inputRef = useRef<InputRef>(null);
+    // A rejected duplicate leaves the DOM value ahead of the controlled value; pull the field back in sync.
+    useEffect(() => {
+        const input = inputRef.current?.input;
+        if (input && input.value !== value) input.value = value;
+        // Runs when the parent rejects an edit (syncTick bump); value is read at that moment on purpose.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [syncTick]);
     // Inline end padding for the eye button: antd v6's own .ant-input padding outranks Tailwind utilities, so a pr-* class is ignored here.
     const maskedStyle = { WebkitTextSecurity: visible ? "none" : "disc", paddingInlineEnd: 40 } as CSSProperties;
     return (
         <div className="relative">
             <Input
+                ref={inputRef}
                 type="text"
                 value={value}
                 onChange={(event) => onChange(event.target.value)}
                 placeholder="sk-..."
                 style={maskedStyle}
                 autoComplete="off"
-                name="canvas-provider-key"
+                name={fieldName}
                 data-form-type="other"
                 data-lpignore="true"
                 data-1p-ignore
@@ -273,6 +288,122 @@ function SecretInput({ value, onChange }: { value: string; onChange: (value: str
             >
                 {visible ? <EyeOff className="size-4" /> : <Eye className="size-4" />}
             </button>
+        </div>
+    );
+}
+
+// Inline per-key model manager: fetch the upstream list with just this key, search it, add names
+// manually, and check models into the channel list. Checking writes immediately, like the old page.
+function KeyModelPanel({ channel, apiKeyName, apiKeyValue, canFetch, fetched, onFetched, onChange }: { channel: ModelChannel; apiKeyName: string; apiKeyValue: string; canFetch: boolean; fetched: string[]; onFetched: (models: string[]) => void; onChange: (models: ChannelModel[]) => void }) {
+    const { message } = App.useApp();
+    const { t } = useTranslation();
+    const [loading, setLoading] = useState(false);
+    // Snapshot of the models present when the panel opened: unchecking must keep the name listable for re-checking.
+    const [existing] = useState<string[]>(() => channel.models.map((model) => model.name));
+    const [search, setSearch] = useState("");
+    const [manual, setManual] = useState("");
+    const [activeTab, setActiveTab] = useState<"new" | "existing">(channel.models.length ? "existing" : "new");
+
+    const selected = useMemo(() => new Set(channel.models.map((model) => model.name)), [channel.models]);
+    const knownNames = useMemo(() => [...existing, ...fetched].filter((name, index, list) => list.indexOf(name) === index), [existing, fetched]);
+    const currentList = activeTab === "new" ? fetched : existing;
+    const visibleList = useMemo(() => {
+        const keyword = search.trim().toLowerCase();
+        return keyword ? currentList.filter((name) => name.toLowerCase().includes(keyword)) : currentList;
+    }, [currentList, search]);
+    const visibleSelectedCount = visibleList.filter((name) => selected.has(name)).length;
+
+    const applyNames = (names: string[]) => {
+        const current = new Map(channel.models.map((model) => [model.name, model]));
+        onChange(normalizeChannelModels(names.map((name) => current.get(name) || { name, capability: guessCapability(name) })));
+    };
+    const applySelection = (next: Set<string>) => applyNames(knownNames.filter((name) => next.has(name)));
+    const toggle = (name: string, checked: boolean) => {
+        const next = new Set(selected);
+        if (checked) next.add(name);
+        else next.delete(name);
+        applySelection(next);
+    };
+    const selectVisible = (checked: boolean) => {
+        const next = new Set(selected);
+        visibleList.forEach((name) => (checked ? next.add(name) : next.delete(name)));
+        applySelection(next);
+    };
+    const addManual = () => {
+        const name = manual.trim();
+        if (!name) return;
+        const nextFetched = fetched.includes(name) || existing.includes(name) ? fetched : [name, ...fetched];
+        onFetched(nextFetched);
+        setManual("");
+        setActiveTab("new");
+        applyNames([...existing, ...nextFetched].filter((item, index, list) => list.indexOf(item) === index).filter((item) => item === name || selected.has(item)));
+    };
+    const fetchList = async () => {
+        const apiKey = apiKeyValue.trim();
+        if (!channel.baseUrl.trim() || !apiKey) {
+            message.error(t("config.channelEditor.fetchModelsMissing"));
+            return;
+        }
+        setLoading(true);
+        try {
+            const names = await fetchImageModels({ baseUrl: channel.baseUrl, apiKey, apiFormat: channel.apiFormat, proxyMode: channel.proxyMode });
+            onFetched(names);
+            setActiveTab("new");
+            message.success(t("config.channelEditor.fetchedCount", { count: names.length }));
+        } catch (error) {
+            const text = error instanceof Error ? error.message : t("config.channelEditor.fetchModelsFailed");
+            message.error(withResolvedApiKeyContext(text, { resolvedChannelName: channel.name, resolvedApiKeyName: apiKeyName, resolvedApiKeySuffix: channelApiKeySuffix(apiKey) }));
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    return (
+        <div className="mt-3 max-h-[420px] overflow-y-auto rounded-lg border border-stone-200 bg-stone-50/60 p-3 thin-scrollbar dark:border-stone-800 dark:bg-stone-900/40">
+            <div className="mb-3 text-xs text-stone-500">{t("config.channelEditor.modelSelected", { selected: selected.size, total: knownNames.length })}</div>
+            <Input value={search} onChange={(event) => setSearch(event.target.value)} placeholder={t("config.channelEditor.modelSearch")} prefix={<Search className="size-4 text-stone-400" />} allowClear />
+            <div className="mt-2 flex flex-wrap gap-2">
+                <Input className="min-w-[160px] flex-1" value={manual} onChange={(event) => setManual(event.target.value)} onPressEnter={addManual} placeholder={t("config.channelEditor.modelNamePlaceholder")} />
+                <Button onClick={addManual}>{t("config.channelEditor.addModel")}</Button>
+                <Button type="primary" icon={<RefreshCw className="size-4" />} loading={loading} disabled={!canFetch} onClick={() => void fetchList()}>
+                    {t("config.channelEditor.fetchModelList")}
+                </Button>
+            </div>
+            <div className="mt-2 text-xs text-stone-500">{t("config.channelEditor.modelManualHint")}</div>
+            <Tabs
+                className="mt-1"
+                activeKey={activeTab}
+                onChange={(key) => setActiveTab(key as "new" | "existing")}
+                items={[
+                    { key: "new", label: t("config.channelEditor.fetchedTab", { count: fetched.length }) },
+                    { key: "existing", label: t("config.channelEditor.existingTab", { count: existing.length }) },
+                ]}
+            />
+            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
+                <span className="text-xs text-stone-500">{t("config.channelEditor.visibleSelected", { selected: visibleSelectedCount, total: visibleList.length })}</span>
+                <div className="flex gap-2">
+                    <Button size="small" disabled={!visibleList.length} onClick={() => selectVisible(true)}>
+                        {t("config.channelEditor.selectVisible")}
+                    </Button>
+                    <Button size="small" disabled={!visibleSelectedCount} onClick={() => selectVisible(false)}>
+                        {t("config.channelEditor.clearVisible")}
+                    </Button>
+                </div>
+            </div>
+            {visibleList.length ? (
+                <div className="space-y-1.5">
+                    {visibleList.map((name) => (
+                        <label key={name} className="flex cursor-pointer items-center gap-3 rounded-lg border border-stone-200 bg-white px-3 py-2 transition-colors hover:bg-stone-50 dark:border-stone-800 dark:bg-stone-900 dark:hover:bg-stone-900/60">
+                            <Checkbox checked={selected.has(name)} onChange={(event) => toggle(name, event.target.checked)} />
+                            <span className="min-w-0 flex-1 truncate text-sm" title={name}>
+                                {name}
+                            </span>
+                        </label>
+                    ))}
+                </div>
+            ) : (
+                <div className="py-6 text-center text-sm text-stone-500">{t(activeTab === "new" ? "config.channelEditor.fetchedEmpty" : "config.channelEditor.existingEmpty")}</div>
+            )}
         </div>
     );
 }

@@ -1,4 +1,4 @@
-import { Maximize, Minus, Plus, X } from "lucide-react";
+import { X } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useTranslation } from "react-i18next";
@@ -19,16 +19,23 @@ function zoomView(view: LightboxView, requestedScale: number, anchor: { x: numbe
 }
 
 // Full-screen image viewer: no modal frame, wheel to zoom, drag to pan, double-click to reset.
-export function CanvasImageLightbox({ src, title, open, onClose }: { src: string; title: string; open: boolean; onClose: () => void }) {
+// Multi-image nodes also get a thumbnail strip; A/D (or ←/→) switches between images.
+export function CanvasImageLightbox({ src, title, open, onClose, images, index, onIndexChange }: { src: string; title: string; open: boolean; onClose: () => void; images?: Array<{ src: string; width?: number; height?: number }>; index?: number; onIndexChange?: (index: number) => void }) {
     const { t } = useTranslation();
     const overlayRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
     const [view, setView] = useState<LightboxView>({ scale: 1, x: 0, y: 0 });
+    const multi = Boolean(images && images.length > 1 && onIndexChange);
+    const switchTo = (next: number) => onIndexChange?.(next);
+    const total = images?.length || 0;
+    const current = multi ? Math.min(Math.max(index || 0, 0), total - 1) : 0;
 
     useEffect(() => {
         if (!open) return;
+        // Opening resets the view; switching images keeps the current zoom and pan so compare views stay stable.
         setView({ scale: 1, x: 0, y: 0 });
-    }, [open, src]);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [open]);
 
     useEffect(() => {
         if (!open) return;
@@ -40,13 +47,33 @@ export function CanvasImageLightbox({ src, title, open, onClose }: { src: string
             const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
             const zoomingIn = event.deltaY < 0;
             const anchor = zoomingIn ? { x: event.clientX, y: event.clientY } : center;
-            setView((current) => zoomView(current, current.scale * (zoomingIn ? 1.12 : 1 / 1.12), anchor, center));
+            setView((current) => {
+                const next = zoomView(current, current.scale * (zoomingIn ? 1.12 : 1 / 1.12), anchor, center);
+                // Below 100% the contained image is smaller than the screen, so it always sits perfectly centered.
+                return next.scale <= 1 ? { scale: next.scale, x: 0, y: 0 } : next;
+            });
         };
         const handleKey = (event: KeyboardEvent) => {
-            if (event.key !== "Escape") return;
-            event.preventDefault();
-            event.stopImmediatePropagation();
-            onClose();
+            if (event.key === "Escape") {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                onClose();
+                return;
+            }
+            if (!multi) return;
+            const key = event.key.toLowerCase();
+            const isPrev = key === "a" || event.key === "ArrowLeft";
+            const isNext = key === "d" || event.key === "ArrowRight";
+            if (isPrev && current > 0) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                switchTo(current - 1);
+            }
+            if (isNext && current < total - 1) {
+                event.preventDefault();
+                event.stopImmediatePropagation();
+                switchTo(current + 1);
+            }
         };
         overlay.addEventListener("wheel", handleWheel, { passive: false });
         window.addEventListener("keydown", handleKey, true);
@@ -54,19 +81,12 @@ export function CanvasImageLightbox({ src, title, open, onClose }: { src: string
             overlay.removeEventListener("wheel", handleWheel);
             window.removeEventListener("keydown", handleKey, true);
         };
-    }, [open, onClose]);
+    }, [open, onClose, multi, current, total, onIndexChange]);
 
     if (!open || !src) return null;
 
     const reset = () => {
         setView({ scale: 1, x: 0, y: 0 });
-    };
-
-    const zoomFromCenter = (factor: number) => {
-        const rect = overlayRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
-        setView((current) => zoomView(current, current.scale * factor, center, center));
     };
 
     return createPortal(
@@ -94,26 +114,33 @@ export function CanvasImageLightbox({ src, title, open, onClose }: { src: string
                 className="pointer-events-none h-screen w-screen object-contain"
                 style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`, transformOrigin: "center center" }}
             />
-            <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 bg-gradient-to-b from-black/70 to-transparent px-4 py-3 text-white">
-                <span className="min-w-0 truncate text-sm font-medium">{title}</span>
+            <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 px-4 py-3 text-white">
+                <span className="min-w-0 truncate text-sm font-medium">
+                    {title}
+                    {multi ? <span className="ml-2 tabular-nums text-white/70">{current + 1} / {total}</span> : null}
+                </span>
                 <button type="button" className="flex h-9 shrink-0 items-center gap-2 rounded-md bg-white/10 px-2.5 text-xs transition hover:bg-white/20" onClick={onClose} aria-label={t("canvas.lightbox.close") }>
                     <kbd className="font-mono text-[11px] text-white/65">Esc</kbd>
                     <span>{t("canvas.lightbox.exit")}</span>
                     <X className="size-4" />
                 </button>
             </div>
-            <div className="absolute inset-x-0 bottom-5 flex items-center justify-center gap-2 text-white">
-                <button type="button" className="grid size-9 place-items-center rounded-full bg-white/10 transition hover:bg-white/20" onClick={() => zoomFromCenter(1 / 1.2)} aria-label="Zoom out">
-                    <Minus className="size-4" />
-                </button>
-                <span className="min-w-14 text-center text-sm tabular-nums">{Math.round(view.scale * 100)}%</span>
-                <button type="button" className="grid size-9 place-items-center rounded-full bg-white/10 transition hover:bg-white/20" onClick={() => zoomFromCenter(1.2)} aria-label="Zoom in">
-                    <Plus className="size-4" />
-                </button>
-                <button type="button" className="ml-2 grid size-9 place-items-center rounded-full bg-white/10 transition hover:bg-white/20" onClick={reset} aria-label="Reset">
-                    <Maximize className="size-4" />
-                </button>
-            </div>
+            {multi ? (
+                <div className="absolute inset-x-0 bottom-4 flex justify-center gap-2 overflow-x-auto px-4 thin-scrollbar">
+                    {images!.map((image, imageIndex) => (
+                        <button
+                            key={imageIndex}
+                            type="button"
+                            className={`h-[84px] shrink-0 overflow-hidden rounded-xl border transition ${imageIndex === current ? "border-white opacity-100" : "border-white/25 opacity-60 hover:opacity-100"}`}
+                            style={image.width && image.height ? { aspectRatio: `${image.width} / ${image.height}`, maxWidth: 210, minWidth: 54 } : undefined}
+                            onClick={() => switchTo(imageIndex)}
+                            aria-label={`${imageIndex + 1} / ${total}`}
+                        >
+                            <img src={image.src} alt="" draggable={false} className="size-full rounded-xl object-cover" />
+                        </button>
+                    ))}
+                </div>
+            ) : null}
         </div>,
         document.body,
     );

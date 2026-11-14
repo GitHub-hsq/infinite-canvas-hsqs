@@ -356,7 +356,15 @@ export function createChannelApiKey(apiKey?: Partial<ChannelApiKey>): ChannelApi
 
 export function channelApiKeyEntries(channel: ModelChannel) {
     const entries = channel.apiKeys?.length ? channel.apiKeys : [createChannelApiKey({ id: "primary", name: "Key 1", apiKey: channel.apiKey, capabilities: ALL_MODEL_CAPABILITIES })];
-    return entries.filter((item) => item.enabled !== false && item.apiKey.trim());
+    // Duplicate key values are never used as fallback: an identical copy would fake a second account with the same quota.
+    const seen = new Set<string>();
+    return entries.filter((item) => {
+        if (item.enabled === false || !item.apiKey.trim()) return false;
+        const value = item.apiKey.trim();
+        if (seen.has(value)) return false;
+        seen.add(value);
+        return true;
+    });
 }
 
 export function channelApiKeyValues(channel: ModelChannel) {

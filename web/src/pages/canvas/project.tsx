@@ -63,8 +63,12 @@ import {
     focusViewportForNode,
     getConnectionTargetAnchor,
     getGroupWrapRect,
+    GROUP_WRAP_PADDING,
+    GROUP_WRAP_TOP_PADDING,
+    nodeBounds,
     normalizeConnection,
     snapNodesIntoGroup,
+    tidyNodeLayout,
 } from "@/lib/canvas/canvas-node-geometry";
 import {
     audioExtension,
@@ -145,6 +149,17 @@ const CONNECTION_NODE_HIT_PADDING = 32;
 const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
+
+type GenerationRerun = { nodeId: string; mode: CanvasNodeGenerationMode; prompt: string };
+
+// A clone of a node that is mid-generation must not fake the loading state or share its video task:
+// strip the run state so the clone starts clean, and hand back what is needed to run a real generation.
+function splitGeneratingClone(metadata: CanvasNodeMetadata | undefined) {
+    if (!metadata) return { metadata, rerun: null };
+    if (metadata.status !== NODE_STATUS_LOADING) return { metadata: { ...metadata }, rerun: null };
+    const { status, startedAt, errorDetails, response, images, primaryImageId, texts, primaryTextId, videoTaskId, videoTaskProvider, content, durationMs, ...rest } = metadata;
+    return { metadata: rest as CanvasNodeMetadata, rerun: metadata.generationMode ? { mode: metadata.generationMode, prompt: metadata.prompt || "" } : null };
+}
 const NODE_STATUS_ERROR = "error" as const;
 // Screen pixels per second the canvas pans while WASD is held during a drag.
 const KEY_PAN_SPEED = 1200;
@@ -869,6 +884,12 @@ function InfiniteCanvasPage() {
     const contextMenuNode = contextMenu?.type === "node" ? nodeById.get(contextMenu.nodeId) || null : null;
     const previewNode = previewNodeId ? nodeById.get(previewNodeId) || null : null;
     const previewContent = previewImageId ? previewNode?.metadata?.images?.find((image) => image.id === previewImageId)?.content : previewNode?.metadata?.content;
+    // Multi-image nodes browse every completed image in the lightbox via side arrows and the thumbnail strip.
+    const previewImages = useMemo(() => {
+        const list = (previewNode?.metadata?.images || []).filter((image) => image.content).map((image) => ({ id: image.id, src: image.content, width: image.naturalWidth, height: image.naturalHeight }));
+        return list.length > 1 ? list : [];
+    }, [previewNode]);
+    const previewIndex = previewImages.findIndex((image) => image.src === previewContent);
     const hasMultipleSelectedNodes = selectedNodeIds.size > 1;
     const selectedNodes = useMemo(() => nodes.filter((node) => selectedNodeIds.has(node.id)), [nodes, selectedNodeIds]);
     const canGroupSelection = canGroupSelectedNodes(selectedNodeIds, nodes);
@@ -1062,6 +1083,55 @@ function InfiniteCanvasPage() {
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
     }, []);
 
+    // Tidy layout for the current selection: each selected group arranges its own members and re-wraps;
+    // a loose selection flows into rows anchored at its current bounding box. Nodes are only moved, never resized.
+    const organizeSelection = useCallback(() => {
+        const selectedIds = selectedNodeIdsRef.current;
+        if (!selectedIds.size) return;
+        const members = collectGroupMemberNodes(selectedIds, nodesRef.current);
+        if (members.length < 2) return;
+        const selectedGroups = nodesRef.current.filter((node) => selectedIds.has(node.id) && node.type === CanvasNodeType.Group);
+        if (selectedGroups.length) {
+            setNodes((prev) => {
+                let next = prev;
+                for (const group of selectedGroups) {
+                    const groupMembers = members.filter((member) => member.metadata?.groupId === group.id);
+                    if (groupMembers.length < 2) continue;
+                    const widest = Math.max(...groupMembers.map((member) => member.width));
+                    const positions = tidyNodeLayout(groupMembers, Math.max(group.width - GROUP_WRAP_PADDING * 2, widest));
+                    const placedById = new Map(
+                        groupMembers.map((member) => [
+                            member.id,
+                            {
+                                x: group.position.x + GROUP_WRAP_PADDING + (positions.get(member.id)?.x ?? 0),
+                                y: group.position.y + GROUP_WRAP_TOP_PADDING + (positions.get(member.id)?.y ?? 0),
+                            },
+                        ]),
+                    );
+                    const placed = groupMembers.map((member) => ({ ...member, position: placedById.get(member.id)! }));
+                    const rect = getGroupWrapRect(placed);
+                    next = next.map((node) => {
+                        const position = placedById.get(node.id);
+                        if (position) return { ...node, position };
+                        if (node.id === group.id) return { ...node, position: { x: rect.x, y: rect.y }, width: rect.width, height: rect.height };
+                        return node;
+                    });
+                }
+                return next;
+            });
+            return;
+        }
+        const bounds = nodeBounds(members);
+        const widest = Math.max(...members.map((member) => member.width));
+        const positions = tidyNodeLayout(members, Math.max(bounds.right - bounds.left, widest));
+        setNodes((prev) =>
+            prev.map((node) => {
+                const offset = positions.get(node.id);
+                return offset ? { ...node, position: { x: bounds.left + offset.x, y: bounds.top + offset.y } } : node;
+            }),
+        );
+    }, []);
+
     const disconnectNodeReference = useCallback((fromNodeId: string, toNodeId: string) => {
         const target = nodesRef.current.find((node) => node.id === toNodeId);
         if (target?.metadata?.referenceNodeIds !== undefined || target?.metadata?.requestPrompt) {
@@ -1107,6 +1177,14 @@ function InfiniteCanvasPage() {
         if (next.type !== CanvasNodeType.Group) setDialogNodeId(id);
     }, []);
 
+    const generationRerunQueueRef = useRef<GenerationRerun[]>([]);
+    // Re-runs start in a macrotask so the clones are committed and visible in nodesRef when the request reads them.
+    const queueGenerationReruns = useCallback((entries: GenerationRerun[]) => {
+        if (!entries.length) return;
+        generationRerunQueueRef.current.push(...entries);
+        setTimeout(() => generationRerunQueueRef.current.splice(0).forEach(({ nodeId, mode, prompt }) => void generateNodeRef.current?.(nodeId, mode, prompt)), 0);
+    }, []);
+
     const copySelectedNodes = useCallback(() => {
         const selectedIds = selectedNodeIdsRef.current;
         if (!selectedIds.size) return;
@@ -1136,15 +1214,18 @@ function InfiniteCanvasPage() {
 
         const offset = 32;
         const idMap = new Map<string, string>();
+        const reruns: GenerationRerun[] = [];
         const clones = sourceNodes.map((node, index) => {
             const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
             idMap.set(node.id, id);
+            const { metadata, rerun } = splitGeneratingClone(node.metadata);
+            if (rerun) reruns.push({ nodeId: id, mode: rerun.mode, prompt: rerun.prompt });
             return {
                 ...node,
                 id,
                 title: node.title.endsWith(" Copy") ? node.title : `${node.title} Copy`,
                 position: { x: node.position.x + offset, y: node.position.y + offset },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
+                metadata,
             };
         });
 
@@ -1170,8 +1251,9 @@ function InfiniteCanvasPage() {
         setDialogNodeId(panelNode?.id || null);
         setSelectedConnectionId(null);
         setContextMenu(null);
+        queueGenerationReruns(reruns);
         return true;
-    }, []);
+    }, [queueGenerationReruns]);
 
     const pasteCopiedNodes = useCallback(() => {
         const clipboard = clipboardRef.current;
@@ -1190,9 +1272,12 @@ function InfiniteCanvasPage() {
         const dx = center.x - (bounds.left + bounds.right) / 2;
         const dy = center.y - (bounds.top + bounds.bottom) / 2;
         const idMap = new Map<string, string>();
+        const reruns: GenerationRerun[] = [];
         const nextNodes = clipboard.nodes.map((node, index) => {
             const id = `${node.type}-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`;
             idMap.set(node.id, id);
+            const { metadata, rerun } = splitGeneratingClone(node.metadata);
+            if (rerun) reruns.push({ nodeId: id, mode: rerun.mode, prompt: rerun.prompt });
             return {
                 ...node,
                 id,
@@ -1201,7 +1286,7 @@ function InfiniteCanvasPage() {
                     x: node.position.x + dx,
                     y: node.position.y + dy,
                 },
-                metadata: node.metadata ? { ...node.metadata } : undefined,
+                metadata,
             };
         });
 
@@ -1230,8 +1315,9 @@ function InfiniteCanvasPage() {
         setSelectedConnectionId(null);
         setContextMenu(null);
         setDialogNodeId(pastedNodes[0]?.type === CanvasNodeType.Group ? null : pastedNodes[0]?.id || null);
+        queueGenerationReruns(reruns);
         return true;
-    }, [getCanvasCenter]);
+    }, [getCanvasCenter, queueGenerationReruns]);
 
     const focusNode = useCallback(
         (nodeId: string) => {
@@ -2217,14 +2303,14 @@ function InfiniteCanvasPage() {
     }, []);
 
     const saveEditedImageNode = useCallback(
-        async (node: CanvasNodeData, blob: Blob) => {
+        async (node: CanvasNodeData, blob: Blob, label?: string) => {
             const image = await uploadImage(blob);
             const size = fitImageNodeSize(image.width, image.height);
             const childId = nanoid();
             const child: CanvasNodeData = {
                 id: childId,
                 type: CanvasNodeType.Image,
-                title: t("canvas.editors.editedImage"),
+                title: label || t("canvas.editors.editedImage"),
                 position: findFreeChildPosition(nodesRef.current, node, size, { x: node.position.x + node.width + 96, y: node.position.y + node.height / 2 - size.height / 2 }),
                 ...size,
                 metadata: {
@@ -3709,7 +3795,8 @@ function InfiniteCanvasPage() {
                             isRelated={relatedHighlight.nodeIds.has(node.id)}
                             hasIncomingConnection={nodeIdsWithIncoming.has(node.id)}
                             isPointerNear={proximityNodeId === node.id}
-                            pointerWorldY={proximityNodeId === node.id ? mouseWorld.y : undefined}
+                            // Groups never win proximity, but their handle still follows the pointer vertically while visible.
+                            pointerWorldY={proximityNodeId === node.id || node.type === CanvasNodeType.Group ? mouseWorld.y : undefined}
                             isFocusRelated={activeNodeId === node.id}
                             isConnectionTarget={connectionTargetNodeId === node.id}
                             isConnecting={Boolean(connectingParams)}
@@ -3825,6 +3912,7 @@ function InfiniteCanvasPage() {
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
+                    onOrganize={() => organizeSelection()}
                     onUngroup={(node) => ungroupSelection(new Set([node.id]))}
                 />
 
@@ -3837,6 +3925,7 @@ function InfiniteCanvasPage() {
                         canUngroup={canUngroupSelection}
                         onGroup={groupSelection}
                         onUngroup={ungroupSelection}
+                        onOrganize={organizeSelection}
                         onConnectDragStart={handleSelectionConnectStart}
                     />
                 ) : null}
@@ -3902,7 +3991,7 @@ function InfiniteCanvasPage() {
 
                 {editNode?.metadata?.content ? (
                     <Suspense fallback={null}>
-                        <CanvasImageEditor dataUrl={editNode.metadata.content} title={editNode.title || t("assets.kinds.image")} open onClose={() => setEditNodeId(null)} onSave={(blob) => saveEditedImageNode(editNode, blob)} />
+                        <CanvasImageEditor dataUrl={editNode.metadata.content} title={editNode.title || t("assets.kinds.image")} open onClose={() => setEditNodeId(null)} onSave={(blob, label) => saveEditedImageNode(editNode, blob, label)} />
                     </Suspense>
                 ) : null}
 
@@ -3928,6 +4017,9 @@ function InfiniteCanvasPage() {
                     src={previewContent || ""}
                     title={previewNode?.title || t("assets.kinds.image")}
                     open={Boolean(previewContent)}
+                    images={previewImages}
+                    index={previewIndex < 0 ? 0 : previewIndex}
+                    onIndexChange={(index) => setPreviewImageId(previewImages[index]?.id ?? null)}
                     onClose={() => {
                         setPreviewNodeId(null);
                         setPreviewImageId(null);

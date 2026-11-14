@@ -1,4 +1,4 @@
-import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type ViewportTransform } from "@/types/canvas";
+import { CanvasNodeType, type CanvasConnection, type CanvasNodeData, type ConnectionHandle, type Position, type ViewportTransform } from "@/types/canvas";
 
 export function nodeBounds(nodes: CanvasNodeData[]) {
     return nodes.reduce(
@@ -48,8 +48,48 @@ export function snapNodesIntoGroup(movedIds: Set<string>, nodes: CanvasNodeData[
     });
 }
 
-export const GROUP_WRAP_PADDING = 24;
+export const GROUP_WRAP_PADDING = 64;
 export const GROUP_WRAP_TOP_PADDING = 52;
+export const GROUP_TIDY_GAP = 24;
+
+// Tidy layout: cluster nodes into their rough visual rows (vertical overlap), keep reading order inside
+// each row, then flow rows with uniform gaps, wrapping when a row would pass maxWidth.
+// Returns relative positions keyed by node id, to be placed from the block's top-left origin.
+export function tidyNodeLayout(members: CanvasNodeData[], maxWidth: number, gap = GROUP_TIDY_GAP) {
+    const byTop = [...members].sort((a, b) => a.position.y - b.position.y);
+    const rows: CanvasNodeData[][] = [];
+    let rowBottom = -Number.POSITIVE_INFINITY;
+    for (const node of byTop) {
+        const row = rows[rows.length - 1];
+        if (!row || node.position.y > rowBottom) {
+            rows.push([node]);
+            rowBottom = node.position.y + node.height;
+        } else {
+            row.push(node);
+            rowBottom = Math.max(rowBottom, node.position.y + node.height);
+        }
+    }
+    rows.forEach((row) => row.sort((a, b) => a.position.x - b.position.x));
+
+    const positions = new Map<string, Position>();
+    let y = 0;
+    for (const row of rows) {
+        let x = 0;
+        let rowHeight = 0;
+        for (const node of row) {
+            if (x > 0 && x + node.width > maxWidth) {
+                y += rowHeight + gap;
+                x = 0;
+                rowHeight = 0;
+            }
+            positions.set(node.id, { x, y });
+            x += node.width + gap;
+            rowHeight = Math.max(rowHeight, node.height);
+        }
+        y += rowHeight + gap;
+    }
+    return positions;
+}
 
 function selectedGroupIds(selectedIds: Set<string>, nodes: CanvasNodeData[]) {
     return new Set(nodes.filter((node) => selectedIds.has(node.id) && node.type === CanvasNodeType.Group).map((node) => node.id));

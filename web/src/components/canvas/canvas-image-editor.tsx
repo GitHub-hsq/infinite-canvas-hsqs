@@ -7,6 +7,7 @@ import {
     Check,
     Crop,
     Eraser,
+    FileArchive,
     FlipHorizontal2,
     FlipVertical2,
     Grid3X3,
@@ -27,8 +28,10 @@ import { useTranslation } from "react-i18next";
 
 import {
     cropEditorSnapshot,
+    EDITOR_COMPRESS_TARGET_BYTES,
     editorObjectBounds,
     exportEditorBlob,
+    exportEditorCompressedBlob,
     flipEditorSnapshot,
     hitEditorObject,
     identityEditorMatrix,
@@ -58,7 +61,7 @@ const colors = ["#ff3b30", "#ffcc00", "#34c759", "#0a84ff", "#ffffff", "#000000"
 const cropHandles: Exclude<CropHandle, "move">[] = ["nw", "n", "ne", "e", "se", "s", "sw", "w"];
 const defaultToolWidths = { brush: 4, erase: 30, arrow: 6, rect: 3 };
 
-export default function CanvasImageEditor({ dataUrl, title, open, onClose, onSave }: { dataUrl: string; title: string; open: boolean; onClose: () => void; onSave: (blob: Blob) => Promise<void> }) {
+export default function CanvasImageEditor({ dataUrl, title, open, onClose, onSave }: { dataUrl: string; title: string; open: boolean; onClose: () => void; onSave: (blob: Blob, label?: string) => Promise<void> }) {
     const { t } = useTranslation();
     const { message, modal } = App.useApp();
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -295,6 +298,32 @@ export default function CanvasImageEditor({ dataUrl, title, open, onClose, onSav
             setSaving(false);
         }
     }, [crop, message, onSave, saving, sourceImage, t]);
+
+    // Re-encode the same composite at the highest quality that fits the byte target; the untouched original stays on its own node.
+    const saveCompressed = useCallback(async () => {
+        if (!sourceImage || !snapshotRef.current || saving) return;
+        setSaving(true);
+        try {
+            const originalBytes = dataUrl.includes(",") ? Math.round(((dataUrl.length - dataUrl.indexOf(",") - 1) * 3) / 4) : Number.POSITIVE_INFINITY;
+            if (originalBytes <= EDITOR_COMPRESS_TARGET_BYTES) {
+                message.info(t("canvas.editors.alreadyWithinTarget"));
+                return;
+            }
+            const output = crop ? cropEditorSnapshot(snapshotRef.current, crop) : snapshotRef.current;
+            const result = await exportEditorCompressedBlob(sourceImage, output);
+            if (result.blob.size >= originalBytes) {
+                message.info(t("canvas.editors.compressNoGain"));
+                return;
+            }
+            const toMb = (bytes: number) => `${(bytes / 1024 / 1024).toFixed(1)}MB`;
+            message.success(t("canvas.editors.compressedDone", { before: toMb(originalBytes), after: toMb(result.blob.size), format: result.format, quality: result.quality }));
+            await onSave(result.blob, t("canvas.editors.compressedImage"));
+        } catch (error) {
+            message.error(error instanceof Error ? error.message : t("canvas.editors.compressFailed"));
+        } finally {
+            setSaving(false);
+        }
+    }, [crop, dataUrl, message, onSave, saving, sourceImage, t]);
 
     useEffect(() => {
         if (!open) return;
@@ -694,6 +723,7 @@ export default function CanvasImageEditor({ dataUrl, title, open, onClose, onSav
                 <ToolbarButton label={t("canvas.editors.zoomOut")} disabled={!viewport.canZoomOut} icon={<ZoomOut />} onClick={viewport.zoomOut} />
                 <button type="button" className="min-w-12 text-center text-xs font-medium tabular-nums opacity-70" onClick={viewport.resetZoom}>{Math.round(viewport.zoom * 100)}%</button>
                 <ToolbarButton label={t("canvas.editors.zoomIn")} disabled={!viewport.canZoomIn} icon={<ZoomIn />} onClick={viewport.zoomIn} />
+                <ToolbarButton label={t("canvas.editors.compressSave")} disabled={saving} icon={<FileArchive />} onClick={() => void saveCompressed()} />
                 <Button type="primary" icon={<Save className="size-4" />} loading={saving} onClick={() => void save()}>{t("canvas.editors.saveNewNode")}</Button>
                 <Tooltip title={`${t("common.close")} · Esc`}><Button type="text" icon={<X className="size-5" />} aria-label={t("common.close")} onClick={requestClose} /></Tooltip>
             </header>
