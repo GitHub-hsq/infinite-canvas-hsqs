@@ -413,6 +413,7 @@ export default {
             themeMode: "主题模式",
             light: "浅色",
             dark: "深色",
+            system: "系统",
             gridStyle: "网格样式",
             dots: "点",
             lines: "线",

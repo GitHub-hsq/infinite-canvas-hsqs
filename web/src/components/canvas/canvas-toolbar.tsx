@@ -1,12 +1,12 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent, ReactNode, RefObject } from "react";
 import { useEffect, useRef, useState } from "react";
 import { Button, Segmented, Switch } from "antd";
-import { CircleDot, Grid2x2, Group, Hand, Image as ImageIcon, Info, Moon, MousePointer2, Music2, Palette, Pin, Puzzle, Redo2, Settings2, Square, Sun, Type, Undo2, Upload, Video } from "lucide-react";
+import { CircleDot, Grid2x2, Group, Hand, Image as ImageIcon, Info, Monitor, Moon, MousePointer2, Music2, Palette, Pin, Puzzle, Redo2, Settings2, Square, Sun, Type, Undo2, Upload, Video } from "lucide-react";
 
 import { canvasThemes, type CanvasBackgroundMode, type CanvasColorTheme, type CanvasTheme } from "@/lib/canvas-theme";
 import { getNodePluginId, listNodeDefinitions, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
 import { getNodeSpec } from "@/constant/canvas";
-import { useThemeStore } from "@/stores/use-theme-store";
+import { useThemeStore, type ThemeMode } from "@/stores/use-theme-store";
 import { AnimatedThemeToggler } from "@/components/ui/animated-theme-toggler";
 import { useTranslation } from "react-i18next";
 
@@ -53,7 +53,8 @@ export function CanvasToolbar({
     const { t } = useTranslation();
     const rootRef = useRef<HTMLDivElement>(null);
     const colorTheme = useThemeStore((state) => state.theme);
-    const setTheme = useThemeStore((state) => state.setTheme);
+    const themeMode = useThemeStore((state) => state.mode);
+    const setThemeMode = useThemeStore((state) => state.setMode);
     const theme = canvasThemes[colorTheme];
     const [hovered, setHovered] = useState<string | null>(null);
     const [tipX, setTipX] = useState(0);
@@ -263,14 +264,18 @@ export function CanvasToolbar({
                 >
                     <div className="px-1 pb-2 text-sm font-medium opacity-65">{t("canvas.toolbar.appearance")}</div>
                     <div className="px-1 pb-1.5 text-[11px] font-medium opacity-50">{t("canvas.toolbar.themeMode")}</div>
-                    <div className="grid grid-cols-2 gap-1 rounded-lg p-1" style={{ background: theme.toolbar.itemHover }}>
-                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="light" onThemeChange={setTheme}>
+                    <div className="grid grid-cols-3 gap-1 rounded-lg p-1" style={{ background: theme.toolbar.itemHover }}>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="light" active={themeMode === "light"} onThemeChange={setThemeMode}>
                             <Sun className="size-4" />
                             {t("canvas.toolbar.light")}
                         </CanvasThemeButton>
-                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="dark" onThemeChange={setTheme}>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="dark" active={themeMode === "dark"} onThemeChange={setThemeMode}>
                             <Moon className="size-4" />
                             {t("canvas.toolbar.dark")}
+                        </CanvasThemeButton>
+                        <CanvasThemeButton colorTheme={colorTheme} targetTheme="system" active={themeMode === "system"} onThemeChange={setThemeMode}>
+                            <Monitor className="size-4" />
+                            {t("canvas.toolbar.system")}
                         </CanvasThemeButton>
                     </div>
                     <div className="mt-3 px-1 pb-1.5 text-[11px] font-medium opacity-50">{t("canvas.toolbar.gridStyle")}</div>
@@ -372,20 +377,41 @@ function Divider({ theme }: { theme: CanvasTheme }) {
     return <div className="mx-1 h-6 w-px" style={{ background: theme.toolbar.border }} />;
 }
 
-function CanvasThemeButton({ colorTheme, targetTheme, onThemeChange, children }: { colorTheme: CanvasColorTheme; targetTheme: CanvasColorTheme; onThemeChange: (theme: CanvasColorTheme) => void; children: ReactNode }) {
+function CanvasThemeButton({
+    colorTheme,
+    targetTheme,
+    active,
+    onThemeChange,
+    children,
+}: {
+    colorTheme: CanvasColorTheme;
+    targetTheme: ThemeMode;
+    active: boolean;
+    onThemeChange: (mode: ThemeMode) => void;
+    children: ReactNode;
+}) {
     const theme = canvasThemes[colorTheme];
-    const active = colorTheme === targetTheme;
     const activeStyle = colorTheme === "light" ? { background: "#111111", color: "#ffffff" } : { background: theme.toolbar.activeBg, color: theme.toolbar.activeText };
     const { t } = useTranslation();
-    const label = targetTheme === "dark" ? t("topNav.darkTheme") : t("topNav.lightTheme");
+    const label = targetTheme === "system" ? t("canvas.toolbar.system") : targetTheme === "dark" ? t("topNav.darkTheme") : t("topNav.lightTheme");
+
+    const className = "inline-flex h-8 min-w-0 items-center justify-center gap-1 whitespace-nowrap rounded-md px-1.5 text-sm transition";
+    const style = active ? activeStyle : { color: theme.toolbar.item };
+    // "System" has no fixed target color to animate to, and picking it while already active must not flip the page.
+    if (targetTheme === "system")
+        return (
+            <button type="button" className={className} style={style} aria-label={label} title={label} onClick={() => onThemeChange("system")}>
+                {children}
+            </button>
+        );
 
     return (
         <AnimatedThemeToggler
             theme={colorTheme}
             targetTheme={targetTheme}
-            onThemeChange={onThemeChange}
-            className="inline-flex h-8 min-w-0 items-center justify-center gap-1.5 rounded-md px-2 text-sm transition"
-            style={active ? activeStyle : { color: theme.toolbar.item }}
+            onThemeChange={() => onThemeChange(targetTheme)}
+            className={className}
+            style={style}
             aria-label={label}
             title={label}
         >

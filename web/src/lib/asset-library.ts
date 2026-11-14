@@ -17,10 +17,18 @@ export function assetKindOfFile(file: File): Exclude<AssetKind, "text"> | null {
     return null;
 }
 
+const TITLE_EXTENSION = /\.(?:png|jpe?g|webp|gif|bmp|avif|svg|mp4|webm|mov|mkv|mp3|wav|m4a|aac|ogg|flac)$/i;
+
+/** Asset title without a leftover file extension; original file names are stored as titles. */
+export function assetTitle(asset: Pick<Asset, "title">) {
+    const title = asset.title.replace(TITLE_EXTENSION, "").trim();
+    return title || asset.title;
+}
+
 /** Store a local file and build the asset record for it, or null when the file is not an image, video or audio. */
 export async function assetDraftFromFile(file: File, categoryId?: string): Promise<AssetDraft | null> {
     const kind = assetKindOfFile(file);
-    const base = { title: file.name, coverUrl: "", tags: [], categoryId: categoryId || undefined, source: undefined };
+    const base = { title: file.name.replace(TITLE_EXTENSION, "").trim() || file.name, coverUrl: "", tags: [], categoryId: categoryId || undefined, source: undefined };
     if (kind === "image") {
         const image = await uploadImage(file);
         return { ...base, kind, coverUrl: image.url, data: { dataUrl: image.url, storageKey: image.storageKey, width: image.width, height: image.height, bytes: image.bytes, mimeType: image.mimeType } };

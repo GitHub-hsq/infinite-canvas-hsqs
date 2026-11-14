@@ -6,7 +6,7 @@ import { useTranslation } from "react-i18next";
 
 import { AssetCategoryBar, AssetCategorySelect } from "@/components/asset-category";
 import { useCopyText } from "@/hooks/use-copy-text";
-import { assetDraftFromFile, assetInCategory, assetMediaUrl } from "@/lib/asset-library";
+import { assetDraftFromFile, assetInCategory, assetMediaUrl, assetTitle } from "@/lib/asset-library";
 import { formatBytes, readFileAsDataUrl } from "@/lib/image-utils";
 import { getMediaBlob } from "@/services/file-storage";
 import { getImageBlob, getImagePreviewRevision, subscribeImagePreviews } from "@/services/image-storage";
@@ -108,7 +108,7 @@ export default function AssetsPage() {
             setFormKind(draft.kind);
             form.setFieldValue("kind", draft.kind);
             if (draft.kind === "image" && !form.getFieldValue("coverUrl")) form.setFieldValue("coverUrl", draft.data.dataUrl);
-            if (!form.getFieldValue("title")) form.setFieldValue("title", file.name);
+            if (!form.getFieldValue("title")) form.setFieldValue("title", draft.title);
         } catch {
             message.error(t("assets.uploadFailed"));
         } finally {
@@ -125,7 +125,7 @@ export default function AssetsPage() {
             const blob = stored || await fetch(assetMediaUrl(asset) || asset.coverUrl).then((response) => response.ok ? response.blob() : null);
             if (!blob) return void message.error(t("assets.downloadFailed"));
             const ext = asset.data.mimeType?.split("/")[1]?.split("+")[0] || (asset.kind === "video" ? "mp4" : asset.kind === "audio" ? "mp3" : "png");
-            saveAs(blob, `${asset.title || "asset"}.${ext}`);
+            saveAs(blob, `${assetTitle(asset) || "asset"}.${ext}`);
         } catch {
             message.error(t("assets.downloadFailed"));
         }
@@ -227,15 +227,16 @@ function AssetCard({ asset, onOpen, onEdit, onCopy, onDownload, onDelete }: { as
     const categories = useAssetStore((state) => state.categories);
     useSyncExternalStore(subscribeImagePreviews, getImagePreviewRevision);
     const cover = assetCoverUrl(asset);
+    const title = assetTitle(asset);
     const label = categories.find((category) => category.id === asset.categoryId)?.name || t(`assets.kinds.${asset.kind}`);
     return (
         <Card hoverable className="overflow-hidden" styles={{ body: { padding: 0 } }} cover={
             <button type="button" className="block w-full text-left" onClick={onOpen}>
-                {cover ? <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" /> : asset.kind === "video" ? <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="aspect-[4/3] w-full object-cover" /> : <div className="flex aspect-[4/3] items-center justify-center overflow-hidden p-5 text-sm">{asset.kind === "audio" ? <Music2 className="size-8 opacity-60" /> : asset.kind === "text" ? <span className="line-clamp-5 whitespace-pre-wrap">{asset.data.content}</span> : t("assets.noCover")}</div>}
+                {cover ? <img src={cover} alt={title} className="aspect-[4/3] w-full object-cover" /> : asset.kind === "video" ? <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="aspect-[4/3] w-full object-cover" /> : <div className="flex aspect-[4/3] items-center justify-center overflow-hidden p-5 text-sm">{asset.kind === "audio" ? <Music2 className="size-8 opacity-60" /> : asset.kind === "text" ? <span className="line-clamp-5 whitespace-pre-wrap">{asset.data.content}</span> : t("assets.noCover")}</div>}
             </button>
         }>
             <button type="button" className="block w-full p-4 text-left" onClick={onOpen}>
-                <div className="flex items-start justify-between gap-3"><h2 className="line-clamp-1 min-w-0 text-sm font-semibold">{asset.title}</h2><Tag className="m-0 shrink-0 text-[11px]">{label}</Tag></div>
+                <div className="flex items-start justify-between gap-3"><h2 className="line-clamp-1 min-w-0 text-sm font-semibold">{title}</h2><Tag className="m-0 shrink-0 text-[11px]">{label}</Tag></div>
                 <Typography.Text type="secondary" className="mt-1 block text-xs">{asset.source || t("assets.unknownSource")}</Typography.Text>
                 <Typography.Paragraph type="secondary" ellipsis={{ rows: 3 }} className="!mb-0 !mt-2 !text-xs">{assetSummary(asset)}</Typography.Paragraph>
                 <div className="mt-3 flex flex-wrap gap-1.5">{(asset.tags || []).slice(0, 3).map((tag) => <Tag key={tag}>{tag}</Tag>)}</div>
@@ -257,7 +258,7 @@ function AssetDrawer({ asset, onClose, onCopy, onDownload }: { asset: Asset | nu
         <Drawer title={t("assets.details")} open={Boolean(asset)} size="large" onClose={onClose}>
             {asset ? <div className="space-y-5">
                 {asset.kind === "image" ? <Image src={assetCoverUrl(asset)} preview={{ src: asset.data.dataUrl || asset.coverUrl }} alt={asset.title} /> : asset.kind === "video" ? <video src={asset.data.url} controls className="aspect-video w-full rounded-lg" /> : asset.kind === "audio" ? <audio src={asset.data.url} controls className="w-full" /> : <Typography.Paragraph className="whitespace-pre-wrap">{asset.data.content}</Typography.Paragraph>}
-                <Typography.Title level={4}>{asset.title}</Typography.Title>
+                <Typography.Title level={4}>{assetTitle(asset)}</Typography.Title>
                 <Space wrap><Tag>{t(`assets.kinds.${asset.kind}`)}</Tag>{asset.tags.map((tag) => <Tag key={tag}>{tag}</Tag>)}</Space>
                 <Typography.Paragraph>{assetSummary(asset)}</Typography.Paragraph>
                 {asset.note ? <Typography.Paragraph>{asset.note}</Typography.Paragraph> : null}

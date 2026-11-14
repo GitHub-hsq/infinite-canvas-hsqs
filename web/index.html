@@ -8,10 +8,14 @@
         <title>无限画布</title>
         <script>
             try {
-                var s = JSON.parse(localStorage.getItem("infinite-canvas:theme_store") || "{}");
-                var t = s.state && s.state.theme === "light" ? "light" : "dark";
-                document.documentElement.classList.toggle("dark", t === "dark");
-                document.documentElement.style.colorScheme = t;
+                var stored = JSON.parse(localStorage.getItem("infinite-canvas:theme_mode") || "{}");
+                var mode = stored.state && stored.state.mode;
+                if (!mode) mode = "dark";
+                var prefersDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
+                var system = mode === "system" ? (prefersDark ? "dark" : "light") : mode;
+                var theme = system === "light" ? "light" : "dark";
+                document.documentElement.classList.toggle("dark", theme === "dark");
+                document.documentElement.style.colorScheme = theme;
             } catch (e) {}
         </script>
     </head>

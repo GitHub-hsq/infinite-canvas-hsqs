@@ -4,7 +4,7 @@ import { FileText, Music2, Search, Upload } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { AssetCategoryBar } from "@/components/asset-category";
-import { assetDraftFromFile, assetInCategory, assetKindOfFile, type AssetCategoryFilter } from "@/lib/asset-library";
+import { assetDraftFromFile, assetInCategory, assetKindOfFile, assetTitle, type AssetCategoryFilter } from "@/lib/asset-library";
 import { useAddAsset } from "@/hooks/use-add-asset";
 import { getImagePreviewRevision, subscribeImagePreviews } from "@/services/image-storage";
 import { ASSET_KINDS, assetCoverUrl, useAssetStore, type Asset, type AssetKind } from "@/stores/use-asset-store";
@@ -36,7 +36,7 @@ const ACCEPT: Record<AssetKind, string> = { image: "image/*", video: "video/*", 
 export function AssetPickerModal({ open, kinds = ASSET_KINDS, onSelect, onClose }: Props) {
     const { t } = useTranslation();
     return (
-        <Modal title={t("canvas.assetPicker.title")} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 480 } }}>
+        <Modal title={t("canvas.assetPicker.title")} open={open} onCancel={onClose} footer={null} width={860} destroyOnHidden styles={{ body: { padding: "0 24px 24px", minHeight: 320 } }}>
             <AssetPickerContent kinds={kinds} onSelect={onSelect} />
         </Modal>
     );
@@ -158,27 +158,32 @@ function PickerCard({ asset, onClick }: { asset: Asset; onClick: () => void }) {
     const { t } = useTranslation();
     const categories = useAssetStore((state) => state.categories);
     const cover = assetCoverUrl(asset);
+    const title = assetTitle(asset);
     const label = categories.find((category) => category.id === asset.categoryId)?.name || t(`assets.kinds.${asset.kind}`);
+    // The tag repeats the title for canvas-generated assets named after their kind ("画布文本" / 文本).
+    const showLabel = label !== title;
     return (
         <button
             type="button"
             className="group relative cursor-pointer overflow-hidden rounded-lg border border-stone-200 bg-white text-left transition hover:border-stone-400 hover:shadow-md dark:border-stone-700 dark:bg-stone-900 dark:hover:border-stone-500"
             onClick={onClick}
         >
-            {cover ? (
-                <img src={cover} alt={asset.title} className="aspect-[4/3] w-full object-cover" />
-            ) : asset.kind === "video" ? (
-                <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="aspect-[4/3] w-full bg-black object-cover" />
-            ) : (
-                <div className="flex aspect-[4/3] flex-col items-center justify-center gap-2 bg-stone-100 p-3 text-center text-xs leading-5 text-stone-500 dark:bg-stone-800 dark:text-stone-400">
-                    {asset.kind === "audio" ? <Music2 className="size-6" /> : <FileText className="size-5" />}
-                    <span className="line-clamp-3">{asset.kind === "text" ? asset.data.content : asset.title}</span>
-                </div>
-            )}
+            <div className="relative h-24 w-full overflow-hidden bg-stone-100 dark:bg-stone-800" style={{ borderRadius: "0.5rem 0.5rem 0 0" }}>
+                {cover ? (
+                    <img src={cover} alt={title} className="block size-full max-h-full max-w-full object-cover" />
+                ) : asset.kind === "video" ? (
+                    <video src={`${asset.data.url}#t=0.1`} muted playsInline preload="metadata" className="block size-full bg-black object-cover" />
+                ) : (
+                    <div className="flex size-full flex-col items-center justify-center gap-2 p-3 text-center text-xs leading-5 text-stone-500 dark:text-stone-400">
+                        {asset.kind === "audio" ? <Music2 className="size-6" /> : <FileText className="size-5" />}
+                        <span className="line-clamp-3">{asset.kind === "text" ? asset.data.content : title}</span>
+                    </div>
+                )}
+            </div>
             <div className="p-2.5">
                 <div className="flex items-center justify-between gap-2">
-                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{asset.title}</span>
-                    <Tag className="m-0 shrink-0 text-[10px]">{label}</Tag>
+                    <span className="line-clamp-1 text-xs font-medium text-stone-800 dark:text-stone-200">{title}</span>
+                    {showLabel ? <Tag className="m-0 shrink-0 text-[10px]">{label}</Tag> : null}
                 </div>
             </div>
             <div className="pointer-events-none absolute inset-0 flex items-center justify-center bg-stone-950/0 text-sm font-medium text-white opacity-0 transition group-hover:bg-stone-950/55 group-hover:opacity-100">{t("canvas.assetPicker.insert")}</div>

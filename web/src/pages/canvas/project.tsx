@@ -3462,7 +3462,8 @@ function InfiniteCanvasPage() {
     const deleteBatchImage = useCallback((nodeId: string, imageId: string) => {
         const node = nodesRef.current.find((item) => item.id === nodeId);
         const remaining = node?.metadata?.images?.filter((image) => image.id !== imageId) || [];
-        setExpandedBatchNodeIds((current) => new Set([...current].filter((id) => id !== nodeId)));
+        // Keep the batch open while two or more results are left; only a single image has nothing to fan out.
+        if (remaining.length < 2) setExpandedBatchNodeIds((current) => new Set([...current].filter((id) => id !== nodeId)));
         setNodes((prev) =>
             prev.map((item) => {
                 if (item.id !== nodeId) return item;

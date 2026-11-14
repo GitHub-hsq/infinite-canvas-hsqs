@@ -419,6 +419,7 @@ export default {
             themeMode: "Theme",
             light: "Light",
             dark: "Dark",
+            system: "System",
             gridStyle: "Grid style",
             dots: "Dots",
             lines: "Lines",
