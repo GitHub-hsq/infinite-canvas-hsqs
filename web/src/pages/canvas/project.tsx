@@ -36,6 +36,8 @@ import { CanvasNodeUpscaleDialog, type CanvasImageUpscaleParams } from "@/compon
 import { buildNodeGenerationContext, buildNodeGenerationInputs, buildNodeResponseMessages, hydrateNodeGenerationContext, type NodeGenerationInput } from "@/components/canvas/canvas-node-generation";
 import { CanvasNodeHoverToolbar, CanvasNodeInfoModal } from "@/components/canvas/canvas-node-hover-toolbar";
 import { CanvasImageLightbox } from "@/components/canvas/canvas-image-lightbox";
+import { CanvasImageCompare } from "@/components/canvas/canvas-image-compare";
+import { useCompareStore } from "@/stores/use-compare-store";
 import { CanvasSelectionToolbar } from "@/components/canvas/canvas-selection-toolbar";
 import { InfiniteCanvas } from "@/components/canvas/infinite-canvas";
 import { Minimap } from "@/components/canvas/canvas-mini-map";
@@ -252,12 +254,27 @@ function inheritNodeSize(sourceNode: CanvasNodeData | undefined, fallbackSize: s
 }
 
 /** Generation settings a node dragged out of `sourceNode` starts with, so it matches the node it came from. */
+// A node dragged out of another one inherits that node's generation settings, so re-generating
+// continues with the same model and parameters. Irrelevant fields are ignored per generation mode,
+// and a model of a different capability falls back to that mode's default during request building.
 function inheritGenerationMetadata(sourceNode: CanvasNodeData | undefined, fallbackSize: string) {
-    const size = inheritNodeSize(sourceNode, fallbackSize);
-    const metadata: CanvasNodeData["metadata"] = { size };
-    if (sourceNode?.metadata?.quality) metadata.quality = sourceNode.metadata.quality;
-    if (sourceNode?.metadata?.count) metadata.count = sourceNode.metadata.count;
-    if (sourceNode?.metadata?.background) metadata.background = sourceNode.metadata.background;
+    const source = sourceNode?.metadata;
+    const metadata: CanvasNodeData["metadata"] = { size: inheritNodeSize(sourceNode, fallbackSize) };
+    if (source?.model) metadata.model = source.model;
+    if (source?.quality) metadata.quality = source.quality;
+    if (source?.count) metadata.count = source.count;
+    if (source?.background) metadata.background = source.background;
+    if (source?.reasoningEffort) metadata.reasoningEffort = source.reasoningEffort;
+    if (source?.textCount) metadata.textCount = source.textCount;
+    if (source?.seconds) metadata.seconds = source.seconds;
+    if (source?.vquality) metadata.vquality = source.vquality;
+    if (source?.generateAudio) metadata.generateAudio = source.generateAudio;
+    if (source?.watermark) metadata.watermark = source.watermark;
+    if (source?.videoMode) metadata.videoMode = source.videoMode;
+    if (source?.audioVoice) metadata.audioVoice = source.audioVoice;
+    if (source?.audioFormat) metadata.audioFormat = source.audioFormat;
+    if (source?.audioSpeed) metadata.audioSpeed = source.audioSpeed;
+    if (source?.audioInstructions) metadata.audioInstructions = source.audioInstructions;
     return metadata;
 }
 
@@ -361,6 +378,30 @@ function InfiniteCanvasPage() {
     const [superResolveNodeId, setSuperResolveNodeId] = useState<string | null>(null);
     const [angleNodeId, setAngleNodeId] = useState<string | null>(null);
     const [previewNodeId, setPreviewNodeId] = useState<string | null>(null);
+    const [compareOpen, setCompareOpen] = useState(false);
+    const compareItemCount = useCompareStore((state) => state.items.length);
+    const compareItems = useCompareStore((state) => state.items);
+    const addCompareImage = useCompareStore((state) => state.addItem);
+    const removeCompareImage = useCompareStore((state) => state.removeItem);
+    const handleAddToCompare = useCallback(
+        (node: CanvasNodeData) => {
+            // Persist the storage key (survives reloads); src is only a fallback for non-persisted sources.
+            const storageKey = node.metadata?.storageKey;
+            const src = storageKey ? undefined : node.metadata?.content;
+            if (!storageKey && !src) return;
+            const existing = compareItems.find((item) => (storageKey ? item.storageKey === storageKey : Boolean(item.src) && item.src === src));
+            if (existing) {
+                removeCompareImage(existing.id);
+                message.success(t("canvas.compare.removed"));
+                return;
+            }
+            const result = addCompareImage({ storageKey, src, title: node.title || t("assets.kinds.image"), width: node.metadata?.naturalWidth, height: node.metadata?.naturalHeight });
+            if (result === "duplicate") message.info(t("canvas.compare.duplicate"));
+            else if (result === "full") message.warning(t("canvas.compare.full"));
+            else message.success(t("canvas.compare.added"));
+        },
+        [addCompareImage, compareItems, message, removeCompareImage, t],
+    );
     const [hoverPreviewNodeId, setHoverPreviewNodeId] = useState<string | null>(null);
     const [previewImageId, setPreviewImageId] = useState<string | null>(null);
     const [titleEditing, setTitleEditing] = useState(false);
@@ -765,7 +806,7 @@ function InfiniteCanvasPage() {
             const inherited = inheritGenerationMetadata(sourceNode, effectiveConfig.size);
             const inheritsRatio = type === CanvasNodeType.Image || type === CanvasNodeType.Video || type === CanvasNodeType.Config;
             const metadata =
-                type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count), ...inherited } : inheritsRatio ? inherited : undefined;
+                type === CanvasNodeType.Config ? { model: effectiveConfig.imageModel || effectiveConfig.model, count: getGenerationCount(effectiveConfig.canvasImageCount || effectiveConfig.count), ...inherited } : inherited;
             const newNode = createCanvasNode(type, pending.position, metadata);
             const ratioSize = inheritsRatio && type === CanvasNodeType.Image ? imageNodeSizeFromRatio(inherited.size || "") : inheritsRatio ? nodeSizeFromRatio(inherited.size || "", newNode.width, newNode.height) : null;
             if (ratioSize) {
@@ -3912,6 +3953,12 @@ function InfiniteCanvasPage() {
                     onRetry={(node) => void handleRetryNode(node)}
                     onToggleFreeResize={(node) => toggleNodeFreeResize(node.id)}
                     onDelete={(node) => deleteNodes(new Set([node.id]))}
+                    onAddToCompare={(node) => handleAddToCompare(node)}
+                    compareActive={Boolean(
+                        toolbarNode?.metadata?.storageKey
+                            ? compareItems.some((item) => item.storageKey === toolbarNode.metadata?.storageKey)
+                            : toolbarNode?.metadata?.content && compareItems.some((item) => item.src === toolbarNode.metadata?.content),
+                    )}
                     onOrganize={() => organizeSelection()}
                     onUngroup={(node) => ungroupSelection(new Set([node.id]))}
                 />
@@ -3953,7 +4000,12 @@ function InfiniteCanvasPage() {
 
                 {isMiniMapOpen ? <Minimap nodes={nodes} viewport={viewport} viewportSize={size} onViewportChange={setViewport} /> : null}
 
-                <CanvasZoomControls isMiniMapOpen={isMiniMapOpen} onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)} />
+                <CanvasZoomControls
+                    isMiniMapOpen={isMiniMapOpen}
+                    onToggleMiniMap={() => setIsMiniMapOpen((value) => !value)}
+                    onOpenCompare={() => setCompareOpen(true)}
+                    compareCount={compareItemCount}
+                />
 
                 {contextMenu ? (
                     <CanvasNodeContextMenu
@@ -4025,6 +4077,8 @@ function InfiniteCanvasPage() {
                         setPreviewImageId(null);
                     }}
                 />
+
+                <CanvasImageCompare open={compareOpen} onClose={() => setCompareOpen(false)} />
 
                 <AssetPickerModal open={assetPickerOpen} onSelect={(asset) => handleAssetInsert(assetToInsertPayload(asset))} onClose={() => setAssetPickerOpen(false)} />
             </section>

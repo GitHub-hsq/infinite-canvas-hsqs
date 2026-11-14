@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { App, Modal, Segmented, Tooltip } from "antd";
-import { Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LayoutGrid, MessageSquare, Minus, Music2, PanelTop, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
+import { Columns2, Download, Ellipsis, FolderPlus, Image as ImageIcon, Info, LayoutGrid, MessageSquare, Minus, Music2, PanelTop, Plus, RefreshCw, Settings2, Trash2, Ungroup, Upload, Video } from "lucide-react";
 import { useTranslation } from "react-i18next";
 
 import { canvasThemes } from "@/lib/canvas-theme";
@@ -40,6 +40,8 @@ type CanvasNodeHoverToolbarProps = {
     onRetry: (node: CanvasNodeData) => void;
     onToggleFreeResize: (node: CanvasNodeData) => void;
     onDelete: (node: CanvasNodeData) => void;
+    onAddToCompare?: (node: CanvasNodeData) => void;
+    compareActive?: boolean;
     onOrganize?: (node: CanvasNodeData) => void;
     onUngroup?: (node: CanvasNodeData) => void;
     extraTools?: CanvasNodeToolbarItem[];
@@ -82,6 +84,8 @@ export function CanvasNodeHoverToolbar({
     onRetry,
     onToggleFreeResize,
     onDelete,
+    onAddToCompare,
+    compareActive = false,
     onOrganize,
     onUngroup,
     extraTools = [],
@@ -176,6 +180,28 @@ export function CanvasNodeHoverToolbar({
     const imageToolbarToolById = new Map(imageToolbarTools.map((tool) => [tool.id, tool]));
     const toolbarTools = hasImage ? quickImageToolIds.flatMap((id) => imageToolbarToolById.get(id) || []) : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = imageToolbarTools.filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
+    // The compare toggle is always rendered (never filtered by the saved quick-tool list) so it survives reloads.
+    const compareTool =
+        isImage && hasImage && onAddToCompare
+            ? {
+                  id: "compare",
+                  title: t(compareActive ? "canvas.nodeToolbar.compareRemoveTitle" : "canvas.nodeToolbar.compareTitle"),
+                  label: t(compareActive ? "canvas.nodeToolbar.compareRemove" : "canvas.nodeToolbar.compare"),
+                  icon: (
+                      <span className="relative inline-flex">
+                          <Columns2 className="size-4" />
+                          <span
+                              className={`absolute -right-1.5 -top-1.5 grid size-3.5 place-items-center rounded-full text-[10px] font-bold leading-none ${
+                                  compareActive ? "bg-red-500 text-white" : "bg-stone-300 text-stone-700 dark:bg-stone-600 dark:text-stone-200"
+                              }`}
+                          >
+                              {compareActive ? "−" : "+"}
+                          </span>
+                      </span>
+                  ),
+                  onClick: () => onAddToCompare(node),
+              }
+            : null;
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
@@ -210,6 +236,7 @@ export function CanvasNodeHoverToolbar({
                 {toolbarTools.map((tool) => (
                     <ToolbarAction key={tool.id} {...tool} showLabel={isImage ? showImageToolLabels : true} />
                 ))}
+                {compareTool ? <ToolbarAction key="compare" {...compareTool} showLabel={isImage ? showImageToolLabels : true} /> : null}
                 {hasImage ? <ToolbarAction id="more" title={t("canvas.imageTools.configure")} label={t("canvas.imageTools.more")} icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
             </div>
             {hasImage ? (

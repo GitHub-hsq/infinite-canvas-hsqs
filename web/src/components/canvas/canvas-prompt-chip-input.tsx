@@ -126,7 +126,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
         emit(serializeEditor(editor));
     };
 
-    const showPlaceholder = !value.trim();
+    const [focused, setFocused] = useState(false);
+    const showPlaceholder = !value.trim() && !focused;
 
     return (
         <div className="relative w-full cursor-text" data-canvas-wheel-zoom={allowCanvasWheelZoom || undefined}>
@@ -143,6 +144,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 aria-multiline="true"
                 className={`${className || ""} overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
+                onFocus={() => setFocused(true)}
                 onInput={() => {
                     if (!composingRef.current) syncFromEditor();
                 }}
@@ -192,7 +194,10 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 }}
                 onPointerUp={() => requestAnimationFrame(syncMention)}
                 onClick={() => requestAnimationFrame(syncMention)}
-                onBlur={() => window.setTimeout(closeMention, 120)}
+                onBlur={() => {
+                    setFocused(false);
+                    window.setTimeout(closeMention, 120);
+                }}
             />
             {mention && candidates.length ? <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} onHoverIndex={setActiveIndex} /> : null}
             {imagePreview ? <Image src={imagePreview} alt={i18n.t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
