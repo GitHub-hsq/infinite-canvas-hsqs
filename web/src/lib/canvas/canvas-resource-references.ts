@@ -82,15 +82,16 @@ export function getGenerationResourceNodes(nodeId: string, nodes: CanvasNodeData
     return getNodeReferenceNodes(nodeId, nodes, connections);
 }
 
-export function getNodeReferenceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[]) {
+export function getNodeReferenceNodes(nodeId: string, nodes: CanvasNodeData[], connections: CanvasConnection[], options?: { includeMentions?: boolean }) {
     const node = nodes.find((item) => item.id === nodeId);
     if (!node) return [];
     if (node.metadata?.referenceNodeIds !== undefined) {
         // Saved ids describe the request that created a result, while direct connections and live
         // mention tokens describe what is currently visible in its editor. Keep all three in sync.
+        // The reference bar passes includeMentions: false — @ chips belong to the prompt text, not the bar.
         return uniqueNodes([
             ...nodesFromIds(node.metadata.referenceNodeIds, nodes),
-            ...nodesFromIds(readMentionNodeIds(node), nodes),
+            ...(options?.includeMentions === false ? [] : nodesFromIds(readMentionNodeIds(node), nodes)),
             ...getContextInputNodes(nodeId, nodes, connections),
         ]);
     }

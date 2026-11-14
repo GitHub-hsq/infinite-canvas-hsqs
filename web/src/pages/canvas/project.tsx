@@ -152,6 +152,17 @@ const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
 
+// 切断参考连线时，同步从目标节点保存的引用列表里移除该来源，避免参考栏仍显示已切断的项。
+function withoutReferenceLink(nodes: CanvasNodeData[], toNodeId: string, fromNodeId: string) {
+    const target = nodes.find((node) => node.id === toNodeId);
+    if (!target?.metadata?.referenceNodeIds?.includes(fromNodeId)) return nodes;
+    return nodes.map((node) =>
+        node.id === toNodeId && node.metadata?.referenceNodeIds
+            ? { ...node, metadata: { ...node.metadata, referenceNodeIds: node.metadata.referenceNodeIds.filter((id) => id !== fromNodeId) } }
+            : node,
+    );
+}
+
 type GenerationRerun = { nodeId: string; mode: CanvasNodeGenerationMode; prompt: string };
 
 // A clone of a node that is mid-generation must not fake the loading state or share its video task:
@@ -760,6 +771,12 @@ function InfiniteCanvasPage() {
         return screenToCanvas((rect?.left || 0) + (rect?.width || size.width) / 2, (rect?.top || 0) + (rect?.height || size.height) / 2);
     }, [screenToCanvas, size.height, size.width]);
 
+    // 外部粘贴落在鼠标当前位置（mousemove 持续记录的指针）；纯键盘触发的粘贴回落到画布中心。
+    const pasteDropPosition = useCallback(() => {
+        const pointer = pointerClientRef.current;
+        return pointer ? screenToCanvas(pointer.x, pointer.y) : getCanvasCenter();
+    }, [getCanvasCenter, screenToCanvas]);
+
     const setConnecting = useCallback((next: ConnectionHandle | null) => {
         connectingParamsRef.current = next;
         setConnectingParams(next);
@@ -989,7 +1006,8 @@ function InfiniteCanvasPage() {
             else map.set(connection.toNodeId, [source]);
         });
         nodes.filter((node) => node.metadata?.referenceNodeIds !== undefined || node.metadata?.requestPrompt).forEach((node) => {
-            const references = getNodeReferenceNodes(node.id, nodes, connections);
+            // The reference bar manages connections and saved ids; @ chips live in the prompt text only.
+            const references = getNodeReferenceNodes(node.id, nodes, connections, { includeMentions: false });
             if (references.length || node.metadata?.referenceNodeIds !== undefined) map.set(node.id, references);
         });
         return map;
@@ -1119,7 +1137,9 @@ function InfiniteCanvasPage() {
     }, []);
 
     const deleteConnection = useCallback((connectionId: string) => {
+        const connection = connectionsRef.current.find((conn) => conn.id === connectionId);
         setConnections((prev) => prev.filter((conn) => conn.id !== connectionId));
+        if (connection) setNodes((prev) => withoutReferenceLink(prev, connection.toNodeId, connection.fromNodeId));
         setSelectedConnectionId((current) => (current === connectionId ? null : current));
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
     }, []);
@@ -1179,7 +1199,7 @@ function InfiniteCanvasPage() {
             setNodes((prev) =>
                 prev.map((node) =>
                     node.id === toNodeId
-                        ? { ...node, metadata: { ...node.metadata, referenceNodeIds: getNodeReferenceNodes(toNodeId, prev, connectionsRef.current).map((reference) => reference.id).filter((id) => id !== fromNodeId) } }
+                        ? { ...node, metadata: { ...node.metadata, referenceNodeIds: getNodeReferenceNodes(toNodeId, prev, connectionsRef.current, { includeMentions: false }).map((reference) => reference.id).filter((id) => id !== fromNodeId) } }
                         : node,
                 ),
             );
@@ -1300,7 +1320,8 @@ function InfiniteCanvasPage() {
         const clipboard = clipboardRef.current;
         if (!clipboard?.nodes.length) return false;
 
-        const center = getCanvasCenter();
+        // 粘贴锚点跟随鼠标当前位置（无指针记录时回落画布中心），整组节点以包围盒中心对齐到该点。
+        const anchor = pasteDropPosition();
         const bounds = clipboard.nodes.reduce(
             (acc, node) => ({
                 left: Math.min(acc.left, node.position.x),
@@ -1310,8 +1331,8 @@ function InfiniteCanvasPage() {
             }),
             { left: Infinity, top: Infinity, right: -Infinity, bottom: -Infinity },
         );
-        const dx = center.x - (bounds.left + bounds.right) / 2;
-        const dy = center.y - (bounds.top + bounds.bottom) / 2;
+        const dx = anchor.x - (bounds.left + bounds.right) / 2;
+        const dy = anchor.y - (bounds.top + bounds.bottom) / 2;
         const idMap = new Map<string, string>();
         const reruns: GenerationRerun[] = [];
         const nextNodes = clipboard.nodes.map((node, index) => {
@@ -1358,7 +1379,7 @@ function InfiniteCanvasPage() {
         setDialogNodeId(pastedNodes[0]?.type === CanvasNodeType.Group ? null : pastedNodes[0]?.id || null);
         queueGenerationReruns(reruns);
         return true;
-    }, [getCanvasCenter, queueGenerationReruns]);
+    }, [pasteDropPosition, queueGenerationReruns]);
 
     const focusNode = useCallback(
         (nodeId: string) => {
@@ -1795,7 +1816,7 @@ function InfiniteCanvasPage() {
             if (!trimmed) return false;
 
             const node = {
-                ...createCanvasNode(CanvasNodeType.Text, getCanvasCenter(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
+                ...createCanvasNode(CanvasNodeType.Text, pasteDropPosition(), { content: trimmed, status: NODE_STATUS_SUCCESS }),
                 title: trimmed.slice(0, 32) || t("canvas.projectPage.clipboardText"),
             };
 
@@ -1806,7 +1827,7 @@ function InfiniteCanvasPage() {
             setDialogNodeId(node.id);
             return true;
         },
-        [getCanvasCenter, t],
+        [pasteDropPosition, t],
     );
 
     const pasteSystemClipboard = useCallback(async () => {
@@ -1819,14 +1840,14 @@ function InfiniteCanvasPage() {
             if (!imageType) return;
             const blob = await imageItem.getType(imageType);
             const file = new File([blob], "clipboard-image.png", { type: imageType });
-            void createImageFileNode(file, getCanvasCenter());
+            void createImageFileNode(file, pasteDropPosition());
             message.success(t("canvas.projectPage.clipboardImageAdded"));
             return;
         }
 
         const text = await navigator.clipboard.readText();
         if (createTextNodeFromClipboard(text)) message.success(t("canvas.projectPage.clipboardTextAdded"));
-    }, [createImageFileNode, createTextNodeFromClipboard, getCanvasCenter, message, t]);
+    }, [createImageFileNode, createTextNodeFromClipboard, pasteDropPosition, message, t]);
 
     useEffect(() => {
         const handleKeyDown = (event: KeyboardEvent) => {

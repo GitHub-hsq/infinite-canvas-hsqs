@@ -157,6 +157,28 @@ export function CanvasNodeHoverToolbar({
     const baseToolbarTools: ToolbarTool[] = [
         { id: "info", title: t("canvas.nodeToolbar.infoTitle"), label: t("canvas.nodeToolbar.info"), icon: <Info className="size-4" />, onClick: () => onInfo(node) },
         ...(hasImage ? [{ id: "setCanvasCover", title: t("canvas.nodeToolbar.setCanvasCoverTitle"), label: t("canvas.nodeToolbar.setCanvasCover"), icon: <PanelTop className="size-4" />, onClick: () => onSetCanvasCover(node) }] : []),
+        ...(isImage && hasImage && onAddToCompare
+            ? [
+                  {
+                      id: "compare" as const,
+                      title: t(compareActive ? "canvas.nodeToolbar.compareRemoveTitle" : "canvas.nodeToolbar.compareTitle"),
+                      label: t(compareActive ? "canvas.nodeToolbar.compareRemove" : "canvas.nodeToolbar.compare"),
+                      icon: (
+                          <span className="relative inline-flex">
+                              <Columns2 className="size-4" />
+                              <span
+                                  className={`absolute -right-1.5 -top-1.5 grid size-3.5 place-items-center rounded-full text-[10px] font-bold leading-none ${
+                                      compareActive ? "bg-red-500 text-white" : "bg-stone-300 text-stone-700 dark:bg-stone-600 dark:text-stone-200"
+                                  }`}
+                              >
+                                  {compareActive ? "−" : "+"}
+                              </span>
+                          </span>
+                      ),
+                      onClick: () => onAddToCompare(node),
+                  },
+              ]
+            : []),
         ...(node.type === CanvasNodeType.Group && onOrganize ? [{ id: "organize", title: t("canvas.nodeToolbar.organizeTitle"), label: t("canvas.nodeToolbar.organize"), icon: <LayoutGrid className="size-4" />, onClick: () => onOrganize(node) }] : []),
         ...(node.type === CanvasNodeType.Group && onUngroup ? [{ id: "ungroup", title: t("canvas.nodeToolbar.ungroupTitle"), label: t("canvas.nodeToolbar.ungroup"), icon: <Ungroup className="size-4" />, onClick: () => onUngroup(node) }] : []),
         { id: "delete", title: t("canvas.nodeToolbar.removeTitle"), label: t("common.delete"), icon: <Trash2 className="size-4" />, onClick: () => onDelete(node), danger: true },
@@ -180,28 +202,6 @@ export function CanvasNodeHoverToolbar({
     const imageToolbarToolById = new Map(imageToolbarTools.map((tool) => [tool.id, tool]));
     const toolbarTools = hasImage ? quickImageToolIds.flatMap((id) => imageToolbarToolById.get(id) || []) : [...baseToolbarTools, ...nodeToolbarTools, ...extraTools];
     const selectableImageToolbarTools = imageToolbarTools.filter((tool) => tool.id !== "retry") as ImageToolbarSettingsTool[];
-    // The compare toggle is always rendered (never filtered by the saved quick-tool list) so it survives reloads.
-    const compareTool =
-        isImage && hasImage && onAddToCompare
-            ? {
-                  id: "compare",
-                  title: t(compareActive ? "canvas.nodeToolbar.compareRemoveTitle" : "canvas.nodeToolbar.compareTitle"),
-                  label: t(compareActive ? "canvas.nodeToolbar.compareRemove" : "canvas.nodeToolbar.compare"),
-                  icon: (
-                      <span className="relative inline-flex">
-                          <Columns2 className="size-4" />
-                          <span
-                              className={`absolute -right-1.5 -top-1.5 grid size-3.5 place-items-center rounded-full text-[10px] font-bold leading-none ${
-                                  compareActive ? "bg-red-500 text-white" : "bg-stone-300 text-stone-700 dark:bg-stone-600 dark:text-stone-200"
-                              }`}
-                          >
-                              {compareActive ? "−" : "+"}
-                          </span>
-                      </span>
-                  ),
-                  onClick: () => onAddToCompare(node),
-              }
-            : null;
 
     const closeImageToolSettings = () => {
         setImageToolSettingsOpen(false);
@@ -236,7 +236,6 @@ export function CanvasNodeHoverToolbar({
                 {toolbarTools.map((tool) => (
                     <ToolbarAction key={tool.id} {...tool} showLabel={isImage ? showImageToolLabels : true} />
                 ))}
-                {compareTool ? <ToolbarAction key="compare" {...compareTool} showLabel={isImage ? showImageToolLabels : true} /> : null}
                 {hasImage ? <ToolbarAction id="more" title={t("canvas.imageTools.configure")} label={t("canvas.imageTools.more")} icon={<Ellipsis className="size-4" />} active={imageToolSettingsOpen} onClick={openImageToolSettings} showLabel={showImageToolLabels} /> : null}
             </div>
             {hasImage ? (

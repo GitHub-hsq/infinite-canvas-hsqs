@@ -5,7 +5,7 @@ import type { CanvasNodeData } from "@/types/canvas";
 import i18n from "@/i18n";
 
 export type ImageNodeActionToolId = "copyPrompt" | "reversePrompt" | "replace" | "resize" | "editImage" | "maskEdit" | "crop" | "split" | "upscale" | "superResolve" | "angle" | "view";
-export type ImageQuickToolId = "info" | "setCanvasCover" | "delete" | "saveAsset" | "download" | ImageNodeActionToolId;
+export type ImageQuickToolId = "info" | "setCanvasCover" | "delete" | "saveAsset" | "download" | "compare" | ImageNodeActionToolId;
 
 export type ImageToolHandlers = {
     onUpload: (node: CanvasNodeData) => void;
@@ -40,7 +40,7 @@ export type ImageQuickToolsConfig = {
 
 export const IMAGE_QUICK_TOOLS_STORAGE_KEY = "canvas-image-quick-tools-v8";
 
-const defaultBaseToolIds: ImageQuickToolId[] = ["info", "setCanvasCover", "delete", "saveAsset", "download"];
+const defaultBaseToolIds: ImageQuickToolId[] = ["info", "setCanvasCover", "delete", "saveAsset", "download", "compare"];
 
 export const imageToolDefinitions: ImageToolDefinition[] = [
     {

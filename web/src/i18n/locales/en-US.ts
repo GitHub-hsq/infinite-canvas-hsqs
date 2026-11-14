@@ -707,6 +707,7 @@ export default {
             compressFailed: "Image compression failed",
             compressedDone: "Compressed {{before}} → {{after}} ({{format}}, quality {{quality}})",
             saveNewNode: "Save as new node",
+            copyPlainPrompt: "Copy prompt (plain text)",
             discardTitle: "Discard unsaved changes?",
             discardDescription: "Your image edits will not be kept after closing.",
             discard: "Discard changes",
@@ -867,6 +868,8 @@ export default {
         },
         composer: {
             title: "Compose prompt",
+            replaceTitle: "Pick reference content",
+            replaceHint: "Click an item to replace the clicked image chip",
             description: "Use @ to reference connected assets; references are renumbered before sending",
             placeholder: "Enter a prompt and use @ to reference connected images, text, or groups",
             imagePreview: "Referenced image preview",

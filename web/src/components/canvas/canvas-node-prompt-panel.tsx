@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowUp, LoaderCircle, Maximize2, Square } from "lucide-react";
+import { ArrowUp, Copy, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
 
@@ -8,8 +8,8 @@ import { defaultConfig, resolveModelForCapability, useConfigStore, useEffectiveC
 import { canvasThemes } from "@/lib/canvas-theme";
 import { useThemeStore } from "@/stores/use-theme-store";
 import { useAssetStore } from "@/stores/use-asset-store";
+import { useCopyText } from "@/hooks/use-copy-text";
 import { CanvasImageSettingsPopover } from "./canvas-image-settings-popover";
-import { CanvasPromptLibrary } from "./canvas-prompt-library";
 import { CanvasAudioSettingsPopover, type CanvasAudioSettingKey } from "./canvas-audio-settings-popover";
 import { CanvasPromptChipInput } from "./canvas-prompt-chip-input";
 import { CanvasVideoSettingsPopover } from "./canvas-video-settings-popover";
@@ -50,6 +50,7 @@ export function CanvasNodePromptPanel({
     modeOverride,
 }: CanvasNodePromptPanelProps) {
     const { t } = useTranslation();
+    const copyText = useCopyText();
     const globalConfig = useEffectiveConfig();
     const openConfigDialog = useConfigStore((state) => state.openConfigDialog);
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
@@ -127,7 +128,20 @@ export function CanvasNodePromptPanel({
                             aria-label={t("canvas.promptPanel.expandEditor")}
                         />
                     </Tooltip>
-                    <CanvasPromptLibrary onSelect={updatePrompt} />
+                    <Tooltip title={t("canvas.promptPanel.copyPlainPrompt")}>
+                        <Button
+                            type="text"
+                            className="!h-8 !w-8 !min-w-8 shrink-0 !rounded-full !bg-transparent !p-0"
+                            style={{ color: theme.node.text }}
+                            icon={<Copy className="size-3.5" />}
+                            onClick={() => {
+                                // 原始纯文本提示词：去掉 @ 引用标记后的原始输入。
+                                const text = prompt.replace(/@\[node:[^\]]+\]/g, " ").replace(/\s+/g, " ").trim();
+                                if (text) copyText(text, t("common.promptCopied"));
+                            }}
+                            aria-label={t("canvas.promptPanel.copyPlainPrompt")}
+                        />
+                    </Tooltip>
                     {mode === "image" ? (
                         <>
                             <ModelPicker config={config} value={config.model} onChange={(model) => onConfigChange(node.id, { model })} capability="image" onMissingConfig={() => openConfigDialog(true)} className="max-w-[190px]" />

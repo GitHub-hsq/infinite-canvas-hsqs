@@ -23,6 +23,7 @@ function zoomView(view: LightboxView, requestedScale: number, anchor: { x: numbe
 export function CanvasImageLightbox({ src, title, open, onClose, images, index, onIndexChange }: { src: string; title: string; open: boolean; onClose: () => void; images?: Array<{ src: string; width?: number; height?: number }>; index?: number; onIndexChange?: (index: number) => void }) {
     const { t } = useTranslation();
     const overlayRef = useRef<HTMLDivElement>(null);
+    const displayRef = useRef<HTMLDivElement>(null);
     const dragRef = useRef<{ x: number; y: number; startX: number; startY: number } | null>(null);
     const [view, setView] = useState<LightboxView>({ scale: 1, x: 0, y: 0 });
     const multi = Boolean(images && images.length > 1 && onIndexChange);
@@ -39,11 +40,11 @@ export function CanvasImageLightbox({ src, title, open, onClose, images, index, 
 
     useEffect(() => {
         if (!open) return;
-        const overlay = overlayRef.current;
-        if (!overlay) return;
+        const display = displayRef.current;
+        if (!display) return;
         const handleWheel = (event: WheelEvent) => {
             event.preventDefault();
-            const rect = overlay.getBoundingClientRect();
+            const rect = display.getBoundingClientRect();
             const center = { x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 };
             const zoomingIn = event.deltaY < 0;
             const anchor = zoomingIn ? { x: event.clientX, y: event.clientY } : center;
@@ -75,10 +76,10 @@ export function CanvasImageLightbox({ src, title, open, onClose, images, index, 
                 switchTo(current + 1);
             }
         };
-        overlay.addEventListener("wheel", handleWheel, { passive: false });
+        display.addEventListener("wheel", handleWheel, { passive: false });
         window.addEventListener("keydown", handleKey, true);
         return () => {
-            overlay.removeEventListener("wheel", handleWheel);
+            display.removeEventListener("wheel", handleWheel);
             window.removeEventListener("keydown", handleKey, true);
         };
     }, [open, onClose, multi, current, total, onIndexChange]);
@@ -93,7 +94,7 @@ export function CanvasImageLightbox({ src, title, open, onClose, images, index, 
         <div
             ref={overlayRef}
             data-canvas-image-lightbox
-            className="fixed inset-0 z-[2000] flex select-none items-center justify-center overflow-hidden bg-black"
+            className="fixed inset-0 z-[2000] select-none overflow-hidden bg-black"
             onMouseDown={(event) => {
                 if (event.button !== 0 || (event.target instanceof Element && event.target.closest("button"))) return;
                 dragRef.current = { x: event.clientX, y: event.clientY, startX: view.x, startY: view.y };
@@ -107,13 +108,16 @@ export function CanvasImageLightbox({ src, title, open, onClose, images, index, 
             onMouseLeave={() => (dragRef.current = null)}
             onDoubleClick={reset}
         >
-            <img
-                src={src}
-                alt={title}
-                draggable={false}
-                className="pointer-events-none h-screen w-screen object-contain"
-                style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`, transformOrigin: "center center" }}
-            />
+            {/* 展示区独立裁剪：放大的图片只在本区域内显示，不会压到底部条带。 */}
+            <div ref={displayRef} className="absolute inset-x-0 top-0 overflow-hidden" style={{ bottom: multi ? 108 : 0 }}>
+                <img
+                    src={src}
+                    alt={title}
+                    draggable={false}
+                    className="pointer-events-none absolute inset-0 size-full object-contain"
+                    style={{ transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`, transformOrigin: "center center" }}
+                />
+            </div>
             <div className="absolute inset-x-0 top-0 flex items-center justify-between gap-3 px-4 py-3 text-white">
                 <span className="min-w-0 truncate text-sm font-medium">
                     {title}
@@ -126,7 +130,7 @@ export function CanvasImageLightbox({ src, title, open, onClose, images, index, 
                 </button>
             </div>
             {multi ? (
-                <div className="absolute inset-x-0 bottom-4 flex justify-center gap-2 overflow-x-auto px-4 thin-scrollbar">
+                <div className="absolute inset-x-0 bottom-0 flex h-[108px] items-center justify-center gap-2 overflow-x-auto bg-black px-4 thin-scrollbar">
                     {images!.map((image, imageIndex) => (
                         <button
                             key={imageIndex}

@@ -1,10 +1,8 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { CSSProperties, KeyboardEvent, MouseEvent, PointerEvent } from "react";
 import { createPortal } from "react-dom";
-import { Image } from "antd";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
-import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
@@ -39,7 +37,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     const lastEmittedRef = useRef(value);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
-    const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [replaceChip, setReplaceChip] = useState<{ nodeId: string; rect: DOMRect } | null>(null);
 
     const activeReferences = useMemo(() => references.filter((item) => item.active), [references]);
     const referenceById = useMemo(() => new Map(activeReferences.map((item) => [item.nodeId, item])), [activeReferences]);
@@ -64,7 +62,12 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 return;
             }
             const reference = referenceById.get(token.nodeId);
-            if (reference) editor.append(createReferenceChip(reference, theme, setImagePreview));
+            if (reference) {
+                editor.append(createReferenceChip(reference, theme, openChipMenu));
+            } else {
+                // 引用的节点已删除：芯片无法保留，降级为纯文本 @ 符号，保住句子的结构（可重新输入 @ 引用）。
+                editor.append(document.createTextNode("@"));
+            }
         });
         lastEmittedRef.current = value;
         // Persist the normalized form: tokens whose reference was deleted are dropped instead of lingering in the prompt text.
@@ -103,11 +106,22 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
         setActiveIndex(0);
     };
 
+    // 把提示词里被点击的图片芯片替换成选中的参考内容（芯片 DOM 与序列化值同步更新）。
+    const replaceChipReference = (oldNodeId: string, reference: CanvasResourceReference) => {
+        const editor = editorRef.current;
+        if (!editor) return;
+        const chip = editor.querySelector(`[data-ref-node-id="${oldNodeId}"]`);
+        if (!chip) return;
+        chip.replaceWith(createReferenceChip(reference, theme, openChipMenu));
+        setReplaceChip(null);
+        emit(serializeEditor(editor));
+    };
+
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
         if (!editor) return;
         removeActiveMention();
-        const chip = createReferenceChip(reference, theme, setImagePreview);
+        const chip = createReferenceChip(reference, theme, openChipMenu);
         const space = document.createTextNode(" ");
         const selection = window.getSelection();
         const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
@@ -128,6 +142,31 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
 
     const [focused, setFocused] = useState(false);
     const showPlaceholder = !value.trim() && !focused;
+
+    // 点击芯片后菜单在鼠标位置弹出；点选候选即替换被点击的芯片，点击菜单外或 Esc 关闭。
+    const openChipMenu = useCallback((nodeId: string, anchor: { x: number; y: number }) => {
+        setActiveIndex(0);
+        setReplaceChip({ nodeId, rect: new DOMRect(anchor.x, anchor.y, 0, 0) });
+    }, []);
+
+    useEffect(() => {
+        if (!replaceChip) return;
+        const closeOnOutside = (event: PointerEvent | Event) => {
+            const target = event.target instanceof Element ? event.target : null;
+            if (target?.closest("[data-canvas-resource-mention-menu='true']")) return;
+            setReplaceChip(null);
+        };
+        const closeOnEscape = (event: globalThis.KeyboardEvent) => {
+            if (event.key !== "Escape") return;
+            setReplaceChip(null);
+        };
+        document.addEventListener("pointerdown", closeOnOutside, true);
+        document.addEventListener("keydown", closeOnEscape, true);
+        return () => {
+            document.removeEventListener("pointerdown", closeOnOutside, true);
+            document.removeEventListener("keydown", closeOnEscape, true);
+        };
+    }, [replaceChip]);
 
     return (
         <div className="relative w-full cursor-text" data-canvas-wheel-zoom={allowCanvasWheelZoom || undefined}>
@@ -200,7 +239,19 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 }}
             />
             {mention && candidates.length ? <MentionMenu rect={mention.rect} references={candidates} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} onHoverIndex={setActiveIndex} /> : null}
-            {imagePreview ? <Image src={imagePreview} alt={i18n.t("canvas.composer.imagePreview")} style={{ display: "none" }} preview={{ visible: true, src: imagePreview, onVisibleChange: (visible) => !visible && setImagePreview(null) }} /> : null}
+            {replaceChip ? (
+                <MentionMenu
+                    rect={replaceChip.rect}
+                    references={activeReferences}
+                    activeIndex={Math.min(activeIndex, Math.max(activeReferences.length - 1, 0))}
+                    theme={theme}
+                    onSelect={(reference) => {
+                        replaceChipReference(replaceChip.nodeId, reference);
+                        setReplaceChip(null);
+                    }}
+                    onHoverIndex={setActiveIndex}
+                />
+            ) : null}
         </div>
     );
 }
@@ -294,7 +345,7 @@ function ReferencePreview({ reference }: { reference: CanvasResourceReference })
     );
 }
 
-function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImagePreview: (url: string) => void) {
+function createReferenceChip(reference: CanvasResourceReference, theme: (typeof canvasThemes)[keyof typeof canvasThemes], onImageClick: (nodeId: string, anchor: { x: number; y: number }) => void) {
     const wrapper = document.createElement("span");
     wrapper.contentEditable = "false";
     wrapper.dataset.refNodeId = reference.nodeId;
@@ -308,7 +359,7 @@ function createReferenceChip(reference: CanvasResourceReference, theme: (typeof 
         wrapper.addEventListener("click", (event) => {
             event.preventDefault();
             event.stopPropagation();
-            onImagePreview(reference.previewUrl || "");
+            onImageClick(reference.nodeId, { x: event.clientX, y: event.clientY });
         });
     } else {
         wrapper.className = "mx-px inline-flex h-6 max-w-40 items-center justify-center overflow-hidden rounded-md border px-1 text-xs leading-none align-middle";

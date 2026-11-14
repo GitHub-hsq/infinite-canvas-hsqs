@@ -690,6 +690,7 @@ export default {
             compressFailed: "图片压缩失败",
             compressedDone: "已压缩 {{before}} → {{after}}（{{format}} · 质量 {{quality}}）",
             saveNewNode: "保存为新节点",
+            copyPlainPrompt: "复制提示词（纯文本）",
             discardTitle: "放弃未保存的修改？",
             discardDescription: "退出后，本次图片编辑不会保留。",
             discard: "放弃修改",
@@ -844,6 +845,8 @@ export default {
         references: { title: "参考内容", select: "从资产库选择", disconnect: "断开参考连接", removeAsset: "移除资产引用", empty: "暂无内容" },
         composer: {
             title: "组装提示词",
+            replaceTitle: "选择参考内容",
+            replaceHint: "点击一项，替换提示词里被点击的图片",
             description: "@ 引用已连接资产，发送前按当前连接重新编号",
             placeholder: "输入提示词，按 @ 引用连接的图片、文本或组",
             imagePreview: "引用图片预览",
