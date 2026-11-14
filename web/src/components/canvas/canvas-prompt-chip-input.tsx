@@ -56,17 +56,13 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     useEffect(() => {
         const editor = editorRef.current;
         if (!editor) return;
-        if (composingRef.current) return;
-        // Disconnecting a reference removes it from `references` but leaves the same `@[node:…]` token in the value,
-        // so comparing serialized text alone would keep a chip that no longer resolves. Detect stale chips directly,
-        // and rebuild for them even while focused: the chip itself is gone and the caret position no longer matters.
-        const renderedNodeIds = Array.from(editor.querySelectorAll<HTMLElement>("[data-ref-node-id]")).map((chip) => chip.dataset.refNodeId || "");
-        const hasStaleChip = renderedNodeIds.some((nodeId) => !referenceById.has(nodeId));
-        if (!hasStaleChip) {
-            if (document.activeElement === editor || serializeEditor(editor) === value) {
-                lastEmittedRef.current = value;
-                return;
-            }
+        // Rewriting the subtree while the user types destroys the caret and, during an IME session, makes Chrome
+        // insert the committed character a second time. Chips added or replaced by the user are updated in place,
+        // so a focused editor never needs a rebuild; a disconnected chip is degraded on blur instead.
+        if (composingRef.current || document.activeElement === editor) return;
+        if (serializeEditor(editor) === value) {
+            lastEmittedRef.current = value;
+            return;
         }
         editor.textContent = "";
         // A chip that no longer resolves becomes a bare "@" so the user can type a new mention right after it;
@@ -221,8 +217,10 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                     composingRef.current = true;
                 }}
                 onCompositionEnd={() => {
+                    // Chrome fires compositionend before it inserts the committed text, so the DOM here still holds
+                    // the preedit string. Syncing now would publish that intermediate text; the input event that
+                    // follows the commit carries the final value, so clear the flag and let it do the work.
                     composingRef.current = false;
-                    syncFromEditor();
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     event.stopPropagation();
