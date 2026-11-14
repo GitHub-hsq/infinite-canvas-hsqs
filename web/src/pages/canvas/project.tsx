@@ -91,6 +91,7 @@ import {
     sourceNodeReferenceImages,
 } from "@/lib/canvas/canvas-generation-helpers";
 import { getNodeDefinition, isBuiltinNodeType as isBuiltinType, useNodeRegistryVersion } from "@/lib/canvas/node-registry";
+import { dropNodeMention, dropRemovedMentions } from "@/lib/canvas/canvas-prompt-mentions";
 import { registerBuiltinNodes } from "@/components/canvas/nodes/builtin-nodes";
 import { CanvasPluginManagerModal } from "@/components/canvas/canvas-plugin-manager-modal";
 import { CanvasRefreshShell } from "@/components/canvas/canvas-refresh-shell";
@@ -151,17 +152,6 @@ const CONNECTION_NODE_HIT_PADDING = 32;
 const NODE_STATUS_IDLE = "idle" as const;
 const NODE_STATUS_LOADING = "loading" as const;
 const NODE_STATUS_SUCCESS = "success" as const;
-
-// 切断参考连线时，同步从目标节点保存的引用列表里移除该来源，避免参考栏仍显示已切断的项。
-function withoutReferenceLink(nodes: CanvasNodeData[], toNodeId: string, fromNodeId: string) {
-    const target = nodes.find((node) => node.id === toNodeId);
-    if (!target?.metadata?.referenceNodeIds?.includes(fromNodeId)) return nodes;
-    return nodes.map((node) =>
-        node.id === toNodeId && node.metadata?.referenceNodeIds
-            ? { ...node, metadata: { ...node.metadata, referenceNodeIds: node.metadata.referenceNodeIds.filter((id) => id !== fromNodeId) } }
-            : node,
-    );
-}
 
 type GenerationRerun = { nodeId: string; mode: CanvasNodeGenerationMode; prompt: string };
 
@@ -325,6 +315,10 @@ function InfiniteCanvasPage() {
         startY: number;
         // Keyed by node id so drag frames look positions up in O(1) instead of scanning the array per node.
         initialSelectedNodes: Map<string, { x: number; y: number }>;
+        // World point grabbed under the pointer, and each node's offset from it. Positions are recomputed from
+        // these every frame, so zooming or panning the canvas mid-drag keeps the node under the pointer.
+        grabPoint: { x: number; y: number };
+        grabOffsets: Map<string, { x: number; y: number }>;
         movedIds: Set<string>;
     }>({
         isDraggingNode: false,
@@ -332,6 +326,8 @@ function InfiniteCanvasPage() {
         startX: 0,
         startY: 0,
         initialSelectedNodes: new Map(),
+        grabPoint: { x: 0, y: 0 },
+        grabOffsets: new Map(),
         movedIds: new Set(),
     });
 
@@ -734,6 +730,24 @@ function InfiniteCanvasPage() {
         pendingConnectionCreateRef.current = pendingConnectionCreate;
     }, [nodes, connections, selectedNodeIds, viewport, connectingParams, connectionTargetNodeId, pendingConnectionCreate]);
 
+    // Wheel zoom and pan change the viewport without moving the mouse; re-place dragged nodes under the
+    // pointer immediately so they keep following the cursor instead of waiting for the next mousemove.
+    useLayoutEffect(() => {
+        if (!dragRef.current.isDraggingNode || rafRef.current) return;
+        const pointer = pointerClientRef.current;
+        if (!pointer) return;
+        const pointerWorld = screenToCanvas(pointer.x, pointer.y);
+        const { grabOffsets, movedIds } = dragRef.current;
+        const placeAt = (node: CanvasNodeData) => {
+            const offset = grabOffsets.get(node.id);
+            return offset ? { ...node, position: { x: pointerWorld.x + offset.x, y: pointerWorld.y + offset.y } } : node;
+        };
+        setDropTargetGroupId(findGroupDropTarget(movedIds, nodesRef.current.map(placeAt))?.id || null);
+        setNodes((prev) => prev.map(placeAt));
+        // `viewport` is the trigger; positions come from refs so the drag frame stays in sync with the new scale.
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [viewport]);
+
     useLayoutEffect(() => {
         selectionBoxRef.current = selectionBox;
     }, [selectionBox]);
@@ -1082,7 +1096,8 @@ function InfiniteCanvasPage() {
             const allIds = new Set(ids);
             setNodes((prev) => {
                 const next = prev.filter((node) => !allIds.has(node.id));
-                return next.map((node) => {
+                // A deleted source can never resolve again: degrade its surviving `@` chips to plain "@" text.
+                return dropRemovedMentions(next, allIds).map((node) => {
                     const groupId = node.metadata?.groupId;
                     if (groupId && allIds.has(groupId)) return { ...node, metadata: { ...node.metadata, groupId: undefined } };
                     return node;
@@ -1139,7 +1154,7 @@ function InfiniteCanvasPage() {
     const deleteConnection = useCallback((connectionId: string) => {
         const connection = connectionsRef.current.find((conn) => conn.id === connectionId);
         setConnections((prev) => prev.filter((conn) => conn.id !== connectionId));
-        if (connection) setNodes((prev) => withoutReferenceLink(prev, connection.toNodeId, connection.fromNodeId));
+        if (connection) setNodes((prev) => prev.map((node) => (node.id === connection.toNodeId ? dropNodeMention(node, connection.fromNodeId) : node)));
         setSelectedConnectionId((current) => (current === connectionId ? null : current));
         setContextMenu((current) => (current?.type === "connection" && current.connectionId === connectionId ? null : current));
     }, []);
@@ -1204,6 +1219,8 @@ function InfiniteCanvasPage() {
                 ),
             );
         }
+        // The prompt's `@` chip for the disconnected source must become a plain "@" too.
+        setNodes((prev) => prev.map((node) => (node.id === toNodeId ? dropNodeMention(node, fromNodeId) : node)));
         setConnections((prev) => prev.filter((connection) => connection.fromNodeId !== fromNodeId || connection.toNodeId !== toNodeId));
     }, []);
 
@@ -1558,18 +1575,22 @@ function InfiniteCanvasPage() {
             }
         });
         const initialSelectedNodes = new Map(currentNodes.filter((node) => dragIds.has(node.id)).map((node): [string, { x: number; y: number }] => [node.id, { x: node.position.x, y: node.position.y }]));
+        const grabPoint = screenToCanvas(event.clientX, event.clientY);
+        const grabOffsets = new Map([...initialSelectedNodes].map(([id, position]): [string, { x: number; y: number }] => [id, { x: position.x - grabPoint.x, y: position.y - grabPoint.y }]));
         dragRef.current = {
             isDraggingNode: true,
             hasMoved: false,
             startX: event.clientX,
             startY: event.clientY,
             initialSelectedNodes,
+            grabPoint,
+            grabOffsets,
             movedIds: new Set(initialSelectedNodes.keys()),
         };
         historyPausedRef.current = true;
         nodeDraggingRef.current = true;
         setIsNodeDragging(true);
-    }, []);
+    }, [screenToCanvas]);
 
     const finishNodeDrag = useCallback((clientX?: number, clientY?: number) => {
         if (rafRef.current) {
@@ -1580,22 +1601,22 @@ function InfiniteCanvasPage() {
 
         const wasClick = !dragRef.current.hasMoved && dragRef.current.initialSelectedNodes.size === 1;
         const clickedNodeId = dragRef.current.initialSelectedNodes.keys().next().value;
-        const currentViewport = viewportRef.current;
-        const dx = clientX == null ? 0 : (clientX - dragRef.current.startX) / currentViewport.k;
-        const dy = clientY == null ? 0 : (clientY - dragRef.current.startY) / currentViewport.k;
-        const initialPositions = dragRef.current.initialSelectedNodes;
-        const movedIds = dragRef.current.movedIds;
+        const finalWorld = clientX == null || clientY == null ? null : screenToCanvas(clientX, clientY);
+        const { grabOffsets, grabPoint, movedIds } = dragRef.current;
+        const placeAt = (node: CanvasNodeData) => {
+            const offset = grabOffsets.get(node.id);
+            if (!offset) return node;
+            const world = finalWorld || grabPoint;
+            return { ...node, position: { x: world.x + offset.x, y: world.y + offset.y } };
+        };
 
         historyPausedRef.current = false;
         nodeDraggingRef.current = false;
         setIsNodeDragging(false);
         setDropTargetGroupId(null);
-        if (dragRef.current.hasMoved && clientX != null && clientY != null) {
+        if (dragRef.current.hasMoved) {
             setNodes((prev) => {
-                const moved = prev.map((node) => {
-                    const initial = initialPositions.get(node.id);
-                    return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                });
+                const moved = prev.map(placeAt);
                 const targetGroup = findGroupDropTarget(movedIds, moved);
                 if (targetGroup) return snapNodesIntoGroup(movedIds, moved, targetGroup);
                 return moved.map((node) => {
@@ -1610,6 +1631,7 @@ function InfiniteCanvasPage() {
         dragRef.current.isDraggingNode = false;
         dragRef.current.hasMoved = false;
         dragRef.current.initialSelectedNodes = new Map();
+        dragRef.current.grabOffsets = new Map();
         dragRef.current.movedIds = new Set();
         if (wasClick && clickedNodeId) {
             const clickedNode = nodesRef.current.find((node) => node.id === clickedNodeId);
@@ -1625,7 +1647,7 @@ function InfiniteCanvasPage() {
                 }
             }
         }
-    }, []);
+    }, [screenToCanvas]);
 
     const handleGlobalMouseMove = useCallback(
         (event: MouseEvent) => {
@@ -1633,28 +1655,25 @@ function InfiniteCanvasPage() {
             pointerClientRef.current = { x: event.clientX, y: event.clientY };
 
             if (dragRef.current.isDraggingNode) {
-                const dx = (event.clientX - dragRef.current.startX) / currentViewport.k;
-                const dy = (event.clientY - dragRef.current.startY) / currentViewport.k;
-                const initialPositions = dragRef.current.initialSelectedNodes;
-                const movedIds = dragRef.current.movedIds;
-                if (Math.abs(event.clientX - dragRef.current.startX) > 3 || Math.abs(event.clientY - dragRef.current.startY) > 3) {
-                    dragRef.current.hasMoved = true;
+                const grabbed = dragRef.current;
+                const pointerWorld = screenToCanvas(event.clientX, event.clientY);
+                const grabOffsets = grabbed.grabOffsets;
+                const movedIds = grabbed.movedIds;
+                // Anchor each dragged node to its offset from the grabbed world point, so zooming or panning
+                // mid-drag keeps it exactly under the pointer instead of drifting by the scale change.
+                const placeAt = (node: CanvasNodeData) => {
+                    const offset = grabOffsets.get(node.id);
+                    return offset ? { ...node, position: { x: pointerWorld.x + offset.x, y: pointerWorld.y + offset.y } } : node;
+                };
+                if (Math.abs(event.clientX - grabbed.startX) > 3 || Math.abs(event.clientY - grabbed.startY) > 3) {
+                    grabbed.hasMoved = true;
                 }
 
                 // Drop-target detection and node updates both run once per frame; mousemove can fire far more often than the display refreshes.
                 if (rafRef.current) cancelAnimationFrame(rafRef.current);
                 rafRef.current = requestAnimationFrame(() => {
-                    const previewNodes = nodesRef.current.map((node) => {
-                        const initial = initialPositions.get(node.id);
-                        return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                    });
-                    setDropTargetGroupId(findGroupDropTarget(movedIds, previewNodes)?.id || null);
-                    setNodes((prev) =>
-                        prev.map((node) => {
-                            const initial = initialPositions.get(node.id);
-                            return initial ? { ...node, position: { x: initial.x + dx, y: initial.y + dy } } : node;
-                        }),
-                    );
+                    setDropTargetGroupId(findGroupDropTarget(movedIds, nodesRef.current.map(placeAt))?.id || null);
+                    setNodes((prev) => prev.map(placeAt));
                     rafRef.current = null;
                 });
                 return;
@@ -1972,12 +1991,16 @@ function InfiniteCanvasPage() {
             setViewport(nextViewport);
 
             if (dragRef.current.isDraggingNode) {
-                const worldX = offsetX / currentViewport.k;
-                const worldY = offsetY / currentViewport.k;
-                const { initialSelectedNodes, movedIds } = dragRef.current;
-                initialSelectedNodes.forEach((position, id) => initialSelectedNodes.set(id, { x: position.x - worldX, y: position.y - worldY }));
+                const { grabOffsets, movedIds } = dragRef.current;
+                const pointer = pointerClientRef.current;
+                if (!pointer) return;
+                // The pointer stays on screen while the canvas moves under it, so re-place the dragged nodes there.
+                const pointerWorld = screenToCanvas(pointer.x, pointer.y);
+                const shift = (node: CanvasNodeData) => {
+                    const offset = grabOffsets.get(node.id);
+                    return offset ? { ...node, position: { x: pointerWorld.x + offset.x, y: pointerWorld.y + offset.y } } : node;
+                };
                 dragRef.current.hasMoved = true;
-                const shift = (node: CanvasNodeData) => (movedIds.has(node.id) ? { ...node, position: { x: node.position.x - worldX, y: node.position.y - worldY } } : node);
                 setDropTargetGroupId(findGroupDropTarget(movedIds, nodesRef.current.map(shift))?.id || null);
                 setNodes((prev) => prev.map(shift));
                 return;
@@ -2375,10 +2398,9 @@ function InfiniteCanvasPage() {
                 title: label || t("canvas.editors.editedImage"),
                 position: findFreeChildPosition(nodesRef.current, node, size, { x: node.position.x + node.width + 96, y: node.position.y + node.height / 2 - size.height / 2 }),
                 ...size,
-                metadata: {
-                    ...imageMetadata(image),
-                    prompt: node.metadata?.prompt,
-                },
+                // The edited result starts with an empty prompt: the source's prompt described the original image,
+                // and keeping it here made the edit node look like it already carried a request of its own.
+                metadata: imageMetadata(image),
             };
             setNodes((prev) => [...prev, child]);
             setConnections((prev) => [...prev, { id: nanoid(), fromNodeId: node.id, toNodeId: childId }]);

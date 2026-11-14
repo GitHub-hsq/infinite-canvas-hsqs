@@ -1096,6 +1096,7 @@ export default {
             apiKeys: "API Keys",
             addApiKey: "添加 Key",
             apiKeyName: "Key {{index}}",
+            apiKeyDeleteConfirm: "删除「{{name}}」？该 Key 会从当前渠道移除。",
             apiKeyAccount: "账号 / 备注",
             apiKeyAccountPlaceholder: "例如：工作账号、个人账号",
             apiKeyEnabled: "启用这把 Key",

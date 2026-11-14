@@ -38,6 +38,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [replaceChip, setReplaceChip] = useState<{ nodeId: string; rect: DOMRect } | null>(null);
+    const [focused, setFocused] = useState(false);
 
     const activeReferences = useMemo(() => references.filter((item) => item.active), [references]);
     const referenceById = useMemo(() => new Map(activeReferences.map((item) => [item.nodeId, item])), [activeReferences]);
@@ -50,23 +51,42 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
         return activeReferences.filter((item) => `${item.label} ${item.title} ${item.kind} ${item.text || ""}`.toLowerCase().includes(query));
     }, [mention, activeReferences]);
 
-    // Rebuild the DOM from value when unfocused, or when a focused value is an external change rather than an emitted echo.
+    // While the editor has focus its own DOM is authoritative: rebuilding it resets the caret and, around an IME
+    // commit, makes Chrome insert the committed character a second time. External updates are synced on blur.
     useEffect(() => {
         const editor = editorRef.current;
         if (!editor) return;
-        if (document.activeElement === editor && value === lastEmittedRef.current) return;
+        if (composingRef.current) return;
+        // Disconnecting a reference removes it from `references` but leaves the same `@[node:…]` token in the value,
+        // so comparing serialized text alone would keep a chip that no longer resolves. Detect stale chips directly,
+        // and rebuild for them even while focused: the chip itself is gone and the caret position no longer matters.
+        const renderedNodeIds = Array.from(editor.querySelectorAll<HTMLElement>("[data-ref-node-id]")).map((chip) => chip.dataset.refNodeId || "");
+        const hasStaleChip = renderedNodeIds.some((nodeId) => !referenceById.has(nodeId));
+        if (!hasStaleChip) {
+            if (document.activeElement === editor || serializeEditor(editor) === value) {
+                lastEmittedRef.current = value;
+                return;
+            }
+        }
         editor.textContent = "";
+        // A chip that no longer resolves becomes a bare "@" so the user can type a new mention right after it;
+        // the single separator space that followed the chip is dropped too.
+        let dropLeadingSpace = false;
         tokens.forEach((token) => {
             if (token.type === "text") {
-                editor.append(document.createTextNode(token.value));
+                const text = dropLeadingSpace ? token.value.replace(/^ /, "") : token.value;
+                dropLeadingSpace = false;
+                if (text) editor.append(document.createTextNode(text));
                 return;
             }
             const reference = referenceById.get(token.nodeId);
             if (reference) {
                 editor.append(createReferenceChip(reference, theme, openChipMenu));
+                dropLeadingSpace = false;
             } else {
-                // 引用的节点已删除：芯片无法保留，降级为纯文本 @ 符号，保住句子的结构（可重新输入 @ 引用）。
+                // 引用的节点已断开或删除：芯片无法保留，降级为纯文本 @ 符号，保住句子的结构（可重新输入 @ 引用）。
                 editor.append(document.createTextNode("@"));
+                dropLeadingSpace = true;
             }
         });
         lastEmittedRef.current = value;
@@ -76,7 +96,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
             lastEmittedRef.current = serialized;
             onChange(serialized);
         }
-    }, [tokens, referenceById, theme, value]);
+        // Re-running on blur picks up external changes made while the editor was focused.
+    }, [tokens, referenceById, theme, value, focused]);
 
     const emit = (next: string) => {
         lastEmittedRef.current = next;
@@ -86,7 +107,9 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
-        emit(serializeEditor(editor));
+        // IMEs can deliver the same committed text through several input events; only report real changes.
+        const next = serializeEditor(editor);
+        if (next !== lastEmittedRef.current) emit(next);
         syncMention();
     };
 
@@ -138,9 +161,16 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
         }
         closeMention();
         emit(serializeEditor(editor));
+        // The menu button keeps focus after the click. Hand focus back to the editor but keep the caret exactly where
+        // it was placed after the chip, so typing continues right after the reference.
+        const afterChip = selection; // the same Selection object still holds the caret set above
+        editor.focus({ preventScroll: true });
+        if (range && afterChip) {
+            afterChip.removeAllRanges();
+            afterChip.addRange(range);
+        }
     };
 
-    const [focused, setFocused] = useState(false);
     const showPlaceholder = !value.trim() && !focused;
 
     // 点击芯片后菜单在鼠标位置弹出；点选候选即替换被点击的芯片，点击菜单外或 Esc 关闭。
@@ -283,6 +313,11 @@ function MentionMenu({
         selectedRef.current = true;
         onSelect(reference);
     };
+
+    // A fresh menu instance is mounted per open, so clear a stale guard when references change under it.
+    useEffect(() => {
+        selectedRef.current = false;
+    }, [references]);
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
 

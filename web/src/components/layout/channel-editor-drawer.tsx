@@ -147,9 +147,19 @@ export function ChannelEditorPanel({ channel, onChange, onSwitchChannel }: { cha
                                     <Tooltip title={t("config.channelEditor.moveApiKeyDown")}>
                                         <Button size="small" type="text" disabled={index === apiKeys.length - 1} icon={<ArrowDown className="size-3.5" />} aria-label={t("config.channelEditor.moveApiKeyDown")} onClick={() => moveApiKey(index, 1)} />
                                     </Tooltip>
-                                    <Tooltip title={t("common.delete")}>
-                                        <Button size="small" danger type="text" disabled={apiKeys.length <= 1} icon={<Trash2 className="size-3.5" />} aria-label={t("common.delete")} onClick={() => removeApiKey(item.id)} />
-                                    </Tooltip>
+                                    <Popconfirm
+                                        placement="topRight"
+                                        title={t("config.channelEditor.apiKeyDeleteConfirm", { name: item.name.trim() || t("config.channelEditor.apiKeyName", { index: index + 1 }) })}
+                                        okText={t("common.delete")}
+                                        okButtonProps={{ danger: true }}
+                                        cancelText={t("common.cancel")}
+                                        disabled={apiKeys.length <= 1}
+                                        onConfirm={() => removeApiKey(item.id)}
+                                    >
+                                        <Tooltip title={t("common.delete")}>
+                                            <Button size="small" danger type="text" disabled={apiKeys.length <= 1} icon={<Trash2 className="size-3.5" />} aria-label={t("common.delete")} />
+                                        </Tooltip>
+                                    </Popconfirm>
                                 </div>
                                 <div className="grid gap-3 md:grid-cols-[minmax(140px,0.7fr)_minmax(220px,1.3fr)]">
                                     <label className="block min-w-0">

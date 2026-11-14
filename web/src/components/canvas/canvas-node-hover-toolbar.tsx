@@ -120,7 +120,9 @@ export function CanvasNodeHoverToolbar({
     if (!node) return null;
 
     const activeNode = node;
-    const left = viewport.x + (node.position.x + node.width / 2) * viewport.k;
+    // Right-align the toolbar to the node's right edge instead of centering it: a centered toolbar reaches over the
+    // left neighbour, where that node's "+" connection handle sits and covers the first tools.
+    const left = viewport.x + (node.position.x + node.width) * viewport.k;
     // The toolbar's `top` is its bottom edge because the element translates upward by 100%.
     // Keep that edge three screen pixels above the filename, whose local top is 28px above the card.
     // An expanded batch stacks extra rows of cards above the node (4 per row, 18px gap), so lift the toolbar above them.
@@ -223,7 +225,7 @@ export function CanvasNodeHoverToolbar({
     return (
         <>
             <div
-                className="absolute z-[70] flex h-11 -translate-x-1/2 -translate-y-full items-center overflow-visible rounded-full border px-1.5 text-[15px] shadow-[0_8px_28px_rgba(15,23,42,.16)]"
+                className="absolute z-[70] flex h-11 -translate-x-full -translate-y-full items-center overflow-visible rounded-full border px-1.5 text-[15px] shadow-[0_8px_28px_rgba(15,23,42,.16)]"
                 data-node-toolbar={node.id}
                 style={{ left, top, background: theme.node.panel, borderColor: theme.toolbar.border, color: theme.node.text }}
                 onMouseEnter={() => onKeep(node.id)}

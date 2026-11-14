@@ -547,7 +547,13 @@ export default function CanvasImageEditor({ dataUrl, title, open, onClose, onSav
         } else if (drawing.kind === "object" && draft && snapshotRef.current) {
             const bounds = editorObjectBounds(draft);
             const tinyArrow = draft.type === "arrow" && Math.abs(draft.end.x - draft.start.x) + Math.abs(draft.end.y - draft.start.y) < 4 / Math.max(viewport.imageScale, 0.001);
-            if (!tinyArrow && ((draft.type === "brush" || draft.type === "erase") || (bounds.width >= 2 && bounds.height >= 2))) recordChange({ ...snapshotRef.current, objects: [...snapshotRef.current.objects, normalizeObject(draft)] });
+            if (!tinyArrow && ((draft.type === "brush" || draft.type === "erase") || (bounds.width >= 2 && bounds.height >= 2))) {
+                const object = normalizeObject(draft);
+                recordChange({ ...snapshotRef.current, objects: [...snapshotRef.current.objects, object] });
+                // Select the shape just drawn so the side panel edits it directly: toggling "fill" right after
+                // drawing a box used to change nothing, because no object was selected yet.
+                if (object.type !== "brush" && object.type !== "erase") selectObject(object);
+            }
             setDraft(null);
         }
     };

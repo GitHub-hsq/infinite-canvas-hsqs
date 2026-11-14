@@ -1139,6 +1139,7 @@ export default {
             apiKeys: "API keys",
             addApiKey: "Add key",
             apiKeyName: "Key {{index}}",
+            apiKeyDeleteConfirm: "Delete \"{{name}}\"? It will be removed from this provider.",
             apiKeyAccount: "Account / note",
             apiKeyAccountPlaceholder: "For example: Work account",
             apiKeyEnabled: "Enable this key",

@@ -5,6 +5,13 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- API key delete confirmation: with several keys in a provider, the delete button on a key card must first ask "Delete \"<account note or key index>\"?". Cancel keeps it, confirming removes it; with one key left the button stays disabled.
+- Edited-image result prompt: edit an image that has a prompt and choose "Save as new node". The new "Edited image" node must open with an empty prompt field, while the source node keeps its prompt.
+- Rectangle fill: in the image editor, pick the rectangle tool and drag out a box. The side panel must switch to "Selected annotation"; turning on "Fill shape" right away fills that box, and turning it off returns to an outline.
+- Right-aligned node toolbar: with two images side by side, selecting the right one keeps its toolbar flush to that node's right edge and never overlaps the left node's "+" handle.
+- Caret after an `@` reference: type 「人物参考@」, pick an image, then keep typing a comma or text. The character must land after the chip, appear once, and the editor must keep focus.
+- IME punctuation duplication: with a Chinese IME, pick an image via `@` in the prompt and then type 「，」/「。」. The punctuation must appear once only; continued typing, IME switching and paste must not duplicate anything.
+- Zooming/panning while dragging: with the left button held on an image (or a multi-selection/group), zoom with the wheel, pan with the wheel, or pan with W/A/S/D. The nodes must stay under the pointer the whole time and drop exactly where they appear on release.
 - Theme follows the system: the canvas bottom toolbar's appearance panel offers Light, Dark and System. System must match the OS appearance, update live when the OS switches, and persist across reloads; choosing Light or Dark pins that theme.
 - Deleting from an expanded image batch: with three or more images expanded, deleting one keeps the rest expanded (only one fewer card); deleting down to a single image collapses to a normal single-image card, and deleting all returns an empty image node.
 - Reference disconnect cleanup: click the × on a reference-bar item; the direct connection, the saved reference id and the matching @ chip in the prompt are all removed (the chip disappears from the prompt text), and the item leaves the reference bar. Cutting or deleting a connection line on the canvas removes it from the reference bar unless an @ chip for it remains in the prompt text (the chip keeps it, since it still participates in generation).

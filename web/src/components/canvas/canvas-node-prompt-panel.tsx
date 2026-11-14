@@ -62,11 +62,16 @@ export function CanvasNodePromptPanel({
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
     const [expanded, setExpanded] = useState(false);
 
-    // Restore prompts only when switching nodes; preserve the current input after generation on the same node.
+    // The panel keeps its own copy while typing, so the stored prompt has to flow back only when something outside
+    // the editor changed it — disconnecting a reference rewrites it to a bare "@", for example.
     useEffect(() => {
         setPrompt(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [node.id]);
+    const storedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+    useEffect(() => {
+        setPrompt((current) => (current === storedPrompt ? current : storedPrompt));
+    }, [storedPrompt]);
 
     const updatePrompt = (value: string) => {
         setPrompt(value);
