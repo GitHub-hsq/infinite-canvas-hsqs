@@ -5,6 +5,7 @@ description: Implemented changes that still need manual verification
 
 # Pending Tests
 
+- Theme toggle preserves in-flight generation: start an image generation in the canvas and toggle Dark/Light (via both the top-right theme button and the bottom dock appearance menu) before it completes. The canvas must stay mounted without showing the interrupted-on-refresh error, generation must finish and render the returned images cleanly, and Ant Design overlays (modals, dropdowns, selects) must reflect the active light or dark theme.
 - API key delete confirmation: with several keys in a provider, the delete button on a key card must first ask "Delete \"<account note or key index>\"?". Cancel keeps it, confirming removes it; with one key left the button stays disabled.
 - Edited-image result prompt: edit an image that has a prompt and choose "Save as new node". The new "Edited image" node must open with an empty prompt field, while the source node keeps its prompt.
 - Rectangle fill: in the image editor, pick the rectangle tool and drag out a box. The side panel must switch to "Selected annotation"; turning on "Fill shape" right away fills that box, and turning it off returns to an outline.
