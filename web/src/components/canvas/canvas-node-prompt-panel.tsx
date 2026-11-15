@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ArrowUp, Copy, LoaderCircle, Maximize2, Square } from "lucide-react";
 import { Button, Modal, Tooltip } from "antd";
 import { useTranslation } from "react-i18next";
@@ -60,20 +60,26 @@ export function CanvasNodePromptPanel({
     const hasImageContent = node.type === CanvasNodeType.Image && Boolean(node.metadata?.content);
     const isEditingExistingContent = hasTextContent || hasImageContent;
     const [prompt, setPrompt] = useState(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
+    const promptDraftRef = useRef(prompt);
     const [expanded, setExpanded] = useState(false);
 
-    // The panel keeps its own copy while typing, so the stored prompt has to flow back only when something outside
-    // the editor changed it — disconnecting a reference rewrites it to a bare "@", for example.
+    // The local draft is authoritative while the panel is open. Only a value that differs from the latest draft
+    // is an external update; echoing our own value back would overwrite characters typed during generation.
     useEffect(() => {
-        setPrompt(node.metadata?.composerContent ?? node.metadata?.prompt ?? "");
+        const next = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
+        promptDraftRef.current = next;
+        setPrompt(next);
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [node.id]);
     const storedPrompt = node.metadata?.composerContent ?? node.metadata?.prompt ?? "";
     useEffect(() => {
-        setPrompt((current) => (current === storedPrompt ? current : storedPrompt));
+        if (storedPrompt === promptDraftRef.current) return;
+        promptDraftRef.current = storedPrompt;
+        setPrompt(storedPrompt);
     }, [storedPrompt]);
 
     const updatePrompt = (value: string) => {
+        promptDraftRef.current = value;
         setPrompt(value);
         if (isEditingExistingContent) onConfigChange(node.id, { composerContent: value });
         else onPromptChange(node.id, value);
@@ -87,7 +93,7 @@ export function CanvasNodePromptPanel({
     const canSubmit = Boolean(prompt.trim()) || hasConnectedText;
 
     const submit = () => {
-        const text = prompt.trim();
+        const text = promptDraftRef.current.trim();
         if ((!text && !hasConnectedText) || isRunning) return;
         onGenerate(node.id, mode, text);
     };

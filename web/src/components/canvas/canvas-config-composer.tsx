@@ -6,6 +6,8 @@ import { useTranslation } from "react-i18next";
 
 import i18n from "@/i18n";
 import { canvasThemes } from "@/lib/canvas-theme";
+import { deleteAdjacentReferenceChip, insertReferenceChipAtMention } from "@/lib/canvas/canvas-prompt-mentions";
+import { isImeComposing } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { NodeGenerationInput } from "./canvas-node-generation";
 import { CanvasNodeReferenceBar } from "./canvas-node-reference-bar";
@@ -36,9 +38,12 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const compositionSyncTimerRef = useRef<number | null>(null);
+    const lastEmittedRef = useRef(value);
     const [mention, setMention] = useState<MentionState | null>(null);
     const [activeIndex, setActiveIndex] = useState(0);
     const [imagePreview, setImagePreview] = useState<string | null>(null);
+    const [focused, setFocused] = useState(false);
     const tokens = useMemo(() => parseComposerTokens(value), [value]);
     const referenceById = useMemo(() => new Map(inputs.map((input) => [input.nodeId, input])), [inputs]);
     const candidates = useMemo(() => {
@@ -49,26 +54,51 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     }, [inputs, mention]);
 
     useEffect(() => {
-        if (document.activeElement === editorRef.current) return;
         const editor = editorRef.current;
-        if (!editor) return;
+        if (!editor || composingRef.current || document.activeElement === editor) return;
+        if (serializeEditor(editor) === value) {
+            lastEmittedRef.current = value;
+            return;
+        }
         editor.textContent = "";
         tokens.forEach((token) => {
             if (token.type === "text") {
-                editor.append(document.createTextNode(token.value));
+                if (token.value) editor.append(document.createTextNode(token.value));
                 return;
             }
             const input = referenceById.get(token.nodeId);
             if (input) editor.append(createReferenceChip(input, inputs, theme, setImagePreview));
         });
-    }, [inputs, referenceById, theme, tokens]);
+        lastEmittedRef.current = value;
+    }, [inputs, referenceById, theme, tokens, value, focused]);
+
+    useEffect(
+        () => () => {
+            if (compositionSyncTimerRef.current !== null) window.clearTimeout(compositionSyncTimerRef.current);
+        },
+        [],
+    );
+
+    const emit = (next: string) => {
+        lastEmittedRef.current = next;
+        onChange(next);
+    };
 
     const syncFromEditor = () => {
         const editor = editorRef.current;
         if (!editor) return;
         const next = serializeEditor(editor);
-        onChange(next);
+        if (next !== lastEmittedRef.current) emit(next);
         syncMention();
+    };
+
+    const scheduleCompositionSync = () => {
+        if (compositionSyncTimerRef.current !== null) window.clearTimeout(compositionSyncTimerRef.current);
+        // Sync after the native composition task completes so Chrome commits the final text before any React update.
+        compositionSyncTimerRef.current = window.setTimeout(() => {
+            compositionSyncTimerRef.current = null;
+            if (!composingRef.current) syncFromEditor();
+        }, 0);
     };
 
     const syncMention = () => {
@@ -83,31 +113,22 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
     };
 
     const closeMention = () => {
-        setMention(null);
-        setActiveIndex(0);
+        setMention((current) => (current ? null : current));
+        setActiveIndex((current) => (current ? 0 : current));
     };
 
     const insertReference = (input: NodeGenerationInput) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
         const chip = createReferenceChip(input, inputs, theme, setImagePreview);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        const caret = insertReferenceChipAtMention(editor, chip);
         closeMention();
-        onChange(serializeEditor(editor));
+        emit(serializeEditor(editor));
+        // Keep or restore editor focus with the caret anchored inside the trailing space text node.
+        if (document.activeElement !== editor) editor.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(caret);
     };
 
     const stopCanvasInteraction = (event: PointerEvent | MouseEvent) => event.stopPropagation();
@@ -146,18 +167,24 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                     suppressContentEditableWarning
                     className="thin-scrollbar min-h-28 max-h-72 w-full cursor-text overflow-y-auto overscroll-contain whitespace-pre-wrap break-words px-3 py-2 text-sm leading-7 outline-none"
                     style={{ color: theme.node.text }}
-                    onInput={() => {
-                        if (!composingRef.current) syncFromEditor();
+                    onFocus={() => setFocused(true)}
+                    onInput={(event) => {
+                        if (!composingRef.current && !(event.nativeEvent as InputEvent).isComposing) syncFromEditor();
                     }}
                     onCompositionStart={() => {
+                        if (compositionSyncTimerRef.current !== null) {
+                            window.clearTimeout(compositionSyncTimerRef.current);
+                            compositionSyncTimerRef.current = null;
+                        }
                         composingRef.current = true;
                     }}
                     onCompositionEnd={() => {
                         composingRef.current = false;
-                        syncFromEditor();
+                        scheduleCompositionSync();
                     }}
                     onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                         event.stopPropagation();
+                        if (isImeComposing(event)) return;
                         if (mention && candidates.length) {
                             if (event.key === "ArrowDown") {
                                 event.preventDefault();
@@ -180,7 +207,7 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                                 return;
                             }
                         }
-                        if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                        if ((event.key === "Backspace" || event.key === "Delete") && editorRef.current && deleteAdjacentReferenceChip(editorRef.current, event.key, (el) => Boolean(el.dataset.referenceNodeId))) {
                             event.preventDefault();
                             requestAnimationFrame(syncFromEditor);
                             return;
@@ -189,7 +216,11 @@ export function CanvasConfigComposer({ nodeId, nodes, value, inputs, connectedNo
                     }}
                     onPointerUp={() => requestAnimationFrame(syncMention)}
                     onClick={() => requestAnimationFrame(syncMention)}
-                    onBlur={() => window.setTimeout(closeMention, 120)}
+                    onBlur={() => {
+                        if (!composingRef.current) syncFromEditor();
+                        setFocused(false);
+                        window.setTimeout(closeMention, 120);
+                    }}
                 />
                 {mention && candidates.length ? <MentionMenu inputs={candidates} allInputs={inputs} activeIndex={Math.min(activeIndex, candidates.length - 1)} theme={theme} onSelect={insertReference} onHoverIndex={setActiveIndex} /> : null}
             </div>
@@ -226,6 +257,11 @@ function MentionMenu({
         onSelect(input);
     };
 
+    // Reset the single-select guard if filtered candidates change while the menu stays open.
+    useEffect(() => {
+        selectedRef.current = false;
+    }, [inputs]);
+
     return (
         <div className="absolute left-2 top-[calc(100%+6px)] z-[90] max-h-56 w-64 overflow-y-auto rounded-xl border p-1 shadow-2xl" style={{ background: theme.toolbar.panel, borderColor: theme.toolbar.border }}>
             {inputs.map((input, index) => (
@@ -235,12 +271,21 @@ function MentionMenu({
                     type="button"
                     className="flex w-full min-w-0 items-center gap-2 rounded-lg px-2 py-1.5 text-left text-xs transition"
                     style={{ background: index === activeIndex ? theme.toolbar.activeBg : "transparent", color: index === activeIndex ? theme.toolbar.activeText : theme.node.text }}
-                    onMouseDown={(event) => {
+                    onPointerDown={(event) => {
                         event.preventDefault();
                         event.stopPropagation();
                         selectInput(input);
                     }}
+                    onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }}
                     onMouseEnter={() => onHoverIndex(index)}
+                    onClick={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                        selectInput(input);
+                    }}
                 >
                     <ResourcePreview input={input} />
                     <span className="min-w-0 flex-1">
@@ -315,51 +360,6 @@ function serializeNodes(nodes: NodeListOf<ChildNode>) {
     return result;
 }
 
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.referenceNodeId ? current : null;
-}
-
 function textBeforeCaret() {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return "";
@@ -373,15 +373,6 @@ function textBeforeCaret() {
 function closestEditor(node: Node) {
     const element = node instanceof Element ? node : node.parentElement;
     return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
 }
 
 function parseComposerTokens(value: string): Token[] {

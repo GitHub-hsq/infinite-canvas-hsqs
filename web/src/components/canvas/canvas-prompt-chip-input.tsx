@@ -4,6 +4,7 @@ import { createPortal } from "react-dom";
 import { FileText, Image as ImageIcon, Music2, Video } from "lucide-react";
 
 import { canvasThemes } from "@/lib/canvas-theme";
+import { deleteAdjacentReferenceChip, insertReferenceChipAtMention } from "@/lib/canvas/canvas-prompt-mentions";
 import { isImeComposing, isPlainEnterKey } from "@/lib/keyboard-event";
 import { useThemeStore } from "@/stores/use-theme-store";
 import type { CanvasResourceReference } from "@/lib/canvas/canvas-resource-references";
@@ -32,6 +33,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     const theme = canvasThemes[useThemeStore((state) => state.theme)];
     const editorRef = useRef<HTMLDivElement>(null);
     const composingRef = useRef(false);
+    const compositionSyncTimerRef = useRef<number | null>(null);
     // Track the last value emitted to the parent. An identical focused value is this component's own echo,
     // so skip rebuilding to preserve the caret and IME. Rebuild external changes even while focused.
     const lastEmittedRef = useRef(value);
@@ -120,9 +122,25 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
         setActiveIndex(0);
     };
 
+    const scheduleCompositionSync = () => {
+        if (compositionSyncTimerRef.current !== null) window.clearTimeout(compositionSyncTimerRef.current);
+        // Sync after the native composition task completes so Chrome commits the final text before any React update.
+        compositionSyncTimerRef.current = window.setTimeout(() => {
+            compositionSyncTimerRef.current = null;
+            if (!composingRef.current) syncFromEditor();
+        }, 0);
+    };
+
+    useEffect(
+        () => () => {
+            if (compositionSyncTimerRef.current !== null) window.clearTimeout(compositionSyncTimerRef.current);
+        },
+        [],
+    );
+
     const closeMention = () => {
-        setMention(null);
-        setActiveIndex(0);
+        setMention((current) => (current ? null : current));
+        setActiveIndex((current) => (current ? 0 : current));
     };
 
     // 把提示词里被点击的图片芯片替换成选中的参考内容（芯片 DOM 与序列化值同步更新）。
@@ -139,32 +157,15 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
     const insertReference = (reference: CanvasResourceReference) => {
         const editor = editorRef.current;
         if (!editor) return;
-        removeActiveMention();
         const chip = createReferenceChip(reference, theme, openChipMenu);
-        const space = document.createTextNode(" ");
-        const selection = window.getSelection();
-        const range = selection?.rangeCount ? selection.getRangeAt(0) : null;
-        if (range) {
-            range.insertNode(space);
-            range.insertNode(chip);
-            range.setStartAfter(space);
-            range.collapse(true);
-            selection?.removeAllRanges();
-            selection?.addRange(range);
-        } else {
-            editor.append(chip, space);
-            placeCaretAtEnd(editor);
-        }
+        const caret = insertReferenceChipAtMention(editor, chip);
         closeMention();
         emit(serializeEditor(editor));
-        // The menu button keeps focus after the click. Hand focus back to the editor but keep the caret exactly where
-        // it was placed after the chip, so typing continues right after the reference.
-        const afterChip = selection; // the same Selection object still holds the caret set above
-        editor.focus({ preventScroll: true });
-        if (range && afterChip) {
-            afterChip.removeAllRanges();
-            afterChip.addRange(range);
-        }
+        // Keep or restore editor focus with the caret anchored inside the trailing space text node.
+        if (document.activeElement !== editor) editor.focus({ preventScroll: true });
+        const selection = window.getSelection();
+        selection?.removeAllRanges();
+        selection?.addRange(caret);
     };
 
     const showPlaceholder = !value.trim() && !focused;
@@ -209,18 +210,22 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 aria-multiline="true"
                 className={`${className || ""} overflow-y-auto whitespace-pre-wrap break-words outline-none`}
                 style={{ ...style, cursor: "text" }}
-                onFocus={() => setFocused(true)}
-                onInput={() => {
-                    if (!composingRef.current) syncFromEditor();
+                onFocus={() => {
+                    setFocused(true);
+                }}
+                onInput={(event) => {
+                    if (!composingRef.current && !(event.nativeEvent as InputEvent).isComposing) syncFromEditor();
                 }}
                 onCompositionStart={() => {
+                    if (compositionSyncTimerRef.current !== null) {
+                        window.clearTimeout(compositionSyncTimerRef.current);
+                        compositionSyncTimerRef.current = null;
+                    }
                     composingRef.current = true;
                 }}
                 onCompositionEnd={() => {
-                    // Chrome fires compositionend before it inserts the committed text, so the DOM here still holds
-                    // the preedit string. Syncing now would publish that intermediate text; the input event that
-                    // follows the commit carries the final value, so clear the flag and let it do the work.
                     composingRef.current = false;
+                    scheduleCompositionSync();
                 }}
                 onKeyDown={(event: KeyboardEvent<HTMLDivElement>) => {
                     event.stopPropagation();
@@ -247,7 +252,7 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                             return;
                         }
                     }
-                    if ((event.key === "Backspace" || event.key === "Delete") && deleteAdjacentReference(event.key)) {
+                    if ((event.key === "Backspace" || event.key === "Delete") && editorRef.current && deleteAdjacentReferenceChip(editorRef.current, event.key, (el) => Boolean(el.dataset.refNodeId))) {
                         event.preventDefault();
                         requestAnimationFrame(syncFromEditor);
                         return;
@@ -262,6 +267,8 @@ export function CanvasPromptChipInput({ value, references, onChange, onSubmit, a
                 onPointerUp={() => requestAnimationFrame(syncMention)}
                 onClick={() => requestAnimationFrame(syncMention)}
                 onBlur={() => {
+                    // Commit the DOM before blur allows the external-value effect to rebuild the editor.
+                    if (!composingRef.current) syncFromEditor();
                     setFocused(false);
                     window.setTimeout(closeMention, 120);
                 }}
@@ -348,6 +355,10 @@ function MentionMenu({
                         event.stopPropagation();
                         selectReference(reference);
                     }}
+                    onMouseDown={(event) => {
+                        event.preventDefault();
+                        event.stopPropagation();
+                    }}
                     onMouseEnter={() => onHoverIndex(index)}
                     onClick={(event) => {
                         event.preventDefault();
@@ -423,52 +434,6 @@ function serializeNodes(nodes: NodeListOf<ChildNode>) {
     return result;
 }
 
-function removeActiveMention() {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount) return;
-    const range = selection.getRangeAt(0);
-    const text = textBeforeCaret();
-    const match = /@([^\s@]*)$/.exec(text);
-    if (!match) return;
-    range.setStart(range.startContainer, Math.max(0, range.startOffset - (match[1] || "").length - 1));
-    range.deleteContents();
-}
-
-// Chips are atomic contentEditable="false" blocks and are removed as a unit with adjacent Backspace/Delete presses.
-function deleteAdjacentReference(key: string) {
-    const selection = window.getSelection();
-    if (!selection?.rangeCount || !selection.isCollapsed) return false;
-    const range = selection.getRangeAt(0);
-    const target = adjacentReferenceNode(range, key);
-    if (!target) return false;
-    const nextCaretNode = document.createTextNode("");
-    target.replaceWith(nextCaretNode);
-    range.setStart(nextCaretNode, 0);
-    range.collapse(true);
-    selection.removeAllRanges();
-    selection.addRange(range);
-    return true;
-}
-
-function adjacentReferenceNode(range: Range, key: string) {
-    const container = range.startContainer;
-    const offset = range.startOffset;
-    const previous = key === "Backspace";
-    if (container.nodeType === Node.TEXT_NODE) {
-        const text = container.textContent || "";
-        if ((previous && offset > 0) || (!previous && offset < text.length)) return null;
-        return findReferenceSibling(container, previous);
-    }
-    const children = Array.from(container.childNodes);
-    return findReferenceSibling(children[previous ? offset - 1 : offset] || container, previous, true);
-}
-
-function findReferenceSibling(node: Node, previous: boolean, includeSelf = false): HTMLElement | null {
-    let current: Node | null = includeSelf ? node : previous ? node.previousSibling : node.nextSibling;
-    while (current && current.nodeType === Node.TEXT_NODE && !(current.textContent || "").trim()) current = previous ? current.previousSibling : current.nextSibling;
-    return current instanceof HTMLElement && current.dataset.refNodeId ? current : null;
-}
-
 function textBeforeCaret() {
     const selection = window.getSelection();
     if (!selection?.rangeCount) return "";
@@ -494,15 +459,6 @@ function caretRect(): DOMRect | null {
 function closestEditor(node: Node) {
     const element = node instanceof Element ? node : node.parentElement;
     return element?.closest("[contenteditable='true']") || null;
-}
-
-function placeCaretAtEnd(element: HTMLElement) {
-    const range = document.createRange();
-    range.selectNodeContents(element);
-    range.collapse(false);
-    const selection = window.getSelection();
-    selection?.removeAllRanges();
-    selection?.addRange(range);
 }
 
 // Split value into text fragments and stable `@[node:<id>]` reference tokens, so deleting one
